@@ -55,15 +55,45 @@ local function parseValue(raw)
     return value
 end
 
+local function ensureTable(root, path)
+    local current = root
+
+    for part in path:gmatch("[^%.]+") do
+        if type(current[part]) ~= "table" then
+            current[part] = {}
+        end
+        current = current[part]
+    end
+
+    return current
+end
+
+local function setValue(root, path, value)
+    local current = root
+    local parentPath, leaf = path:match("^(.*)%.([^.]+)$")
+
+    if parentPath then
+        current = ensureTable(root, parentPath)
+    end
+
+    current[leaf or path] = value
+end
+
 function Toml.parse(content)
     local result = {}
+    local currentTable = result
 
     for line in (content .. "\n"):gmatch("(.-)\n") do
         local cleaned = trim((line:gsub("#.*$", "")))
         if cleaned ~= "" then
-            local key, rawValue = cleaned:match("^([%w_%.%-]+)%s*=%s*(.+)$")
-            if key and rawValue then
-                result[key] = parseValue(rawValue)
+            local tablePath = cleaned:match("^%[([%w_%.%-]+)%]$")
+            if tablePath then
+                currentTable = ensureTable(result, tablePath)
+            else
+                local key, rawValue = cleaned:match("^([%w_%.%-]+)%s*=%s*(.+)$")
+                if key and rawValue then
+                    setValue(currentTable, key, parseValue(rawValue))
+                end
             end
         end
     end
