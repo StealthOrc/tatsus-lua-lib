@@ -34,38 +34,53 @@ local function tooltip_position(model)
     return viewport_w - tooltip_width - tooltip_margin, tooltip_margin, "top-right"
 end
 
-return UI.view("tooltip", function(model)
-    local x, y, placement = tooltip_position(model)
-    return UI.screen {
-        UI.panel {
-            id = "tooltip-panel",
-            anchor = "top-left",
-            width = tooltip_width,
-            height = tooltip_height,
-            padding = 18,
-            radius = 8,
-            pointer = model.mode == "pointer" and "pass" or nil,
-            background = "tooltip",
-            border = "accent",
-            border_width = 2,
-            transform = {translate_x = UI.px(x), translate_y = UI.px(y)},
-            transition = {
-                transform = {
-                    duration = model.animate_position or (model.mode ~= "pointer" and 0.18 or 0),
-                    ease = "out_cubic",
-                },
-            },
-            UI.column {
-                gap = 8,
-                UI.text {value = "Tooltip · " .. placement, style = "title"},
-                UI.text {value = "Click to cycle anchor policies.", style = "body"},
-                UI.text {
-                    value = model.mode == "pointer" and "Pointer-follow mode passes input."
-                        or "Inside consumes pointer input.",
-                    style = "body",
-                },
-                UI.text {value = "Outside remains pass-through.", style = "body"},
-            },
+return UI.view("tooltip", {
+    styles = {
+        colors = {
+            tooltip = {0.13, 0.15, 0.22, 1},
         },
-    }
-end)
+    },
+    build = function(model)
+        local x, y, placement = tooltip_position(model)
+        return UI.screen {
+            UI.panel {
+                id = "tooltip-panel",
+                anchor = "top-left",
+                width = tooltip_width,
+                height = tooltip_height,
+                padding = 18,
+                radius = 8,
+                pointer = model.mode == "pointer" and "pass" or nil,
+                background = "tooltip",
+                border = "accent",
+                border_width = 2,
+                transform = {translate_x = UI.px(x), translate_y = UI.px(y)},
+                transition = {
+                    transform = {
+                        duration = model.animate_position
+                            or (model.mode ~= "pointer" and 0.18 or 0),
+                        ease = "out_cubic",
+                    },
+                },
+                UI.column {
+                    gap = 8,
+                    UI.text {value = "Tooltip · " .. placement, style = "title"},
+                    UI.text {
+                        value = "Click to cycle anchor policies.",
+                        style = "body",
+                    },
+                    UI.text {
+                        value = model.mode == "pointer"
+                            and "Pointer-follow mode passes input."
+                            or "Inside consumes pointer input.",
+                        style = "body",
+                    },
+                    UI.text {
+                        value = "Outside remains pass-through.",
+                        style = "body",
+                    },
+                },
+            },
+        }
+    end,
+})

@@ -1,21 +1,18 @@
-local StyleSheet = require("ui2d.style_sheet")
-local FontCache = require("ui2d.font_cache")
-local TextEditor = require("ui2d.text_editor")
-local Svg = require("ui2d.svg")
-local Layout = require("ui2d.layout")
-local Renderer = require("ui2d.renderer")
-local LayerStack = require("ui2d.layer_stack")
-local Transform = require("ui2d.transform")
-local Motion = require("ui2d.motion")
-local Shader = require("ui2d.shader")
-local Navigation = require("ui2d.navigation")
+local StyleSheet = require("ui2d.core.style_sheet")
+local FontCache = require("ui2d.core.font_cache")
+local TextField = require("ui2d.components.text_field")
+local Svg = require("ui2d.core.svg")
+local Layout = require("ui2d.core.layout")
+local Renderer = require("ui2d.core.renderer")
+local LayerStack = require("ui2d.core.layer_stack")
+local Motion = require("ui2d.core.motion")
+local Shader = require("ui2d.core.shader")
+local Navigation = require("ui2d.core.navigation")
+local Gestures = require("ui2d.core.gestures")
+local InputRouter = require("ui2d.core.input_router")
 
 local Context = {}
 Context.__index = Context
-
-local function point_in_item(item, x, y)
-    return item and Transform.contains(item.world_transform, item.rect, x, y)
-end
 
 local function same_handle(handle, key, id)
     return handle and handle.key == key and handle.id == id
@@ -24,94 +21,6 @@ end
 local function input_source_kind(source)
     if type(source) == "table" then return source.kind or "navigation" end
     return source or "navigation"
-end
-
-local function hold_options(node)
-    if node.hold == nil or node.hold == false then return nil end
-    if type(node.hold) == "number" then return {duration = node.hold} end
-    assert(type(node.hold) == "table", "a button hold must be a duration or options table")
-    return node.hold
-end
-
-local function draggable(node)
-    return node.drag_started ~= nil or node.dragged ~= nil or node.drag_ended ~= nil
-end
-
-local function semantic_drag_options(node)
-    if not draggable(node) or node.semantic_drag == false then return nil end
-    if node.semantic_drag == nil or node.semantic_drag == true then return {} end
-    assert(type(node.semantic_drag) == "table", "semantic_drag must be false, true, or an options table")
-    return node.semantic_drag
-end
-
-local function direction_vector(direction)
-    if direction == "left" then return -1, 0 end
-    if direction == "right" then return 1, 0 end
-    if direction == "up" then return 0, -1 end
-    if direction == "down" then return 0, 1 end
-    return 0, 0
-end
-
-local function apply_deadzone(value, deadzone)
-    local magnitude = math.abs(value or 0)
-    if magnitude <= deadzone then return 0 end
-    local scaled = (magnitude - deadzone) / math.max(0.001, 1 - deadzone)
-    return value < 0 and -scaled or scaled
-end
-
-local function action_value(action, source_id, extra, view_key)
-    local result
-    if type(action) == "string" then
-        result = {type = action}
-    elseif type(action) == "table" then
-        result = StyleSheet.copy(action)
-    else
-        return nil
-    end
-    if result.source == nil then result.source = source_id end
-    if result.view == nil then result.view = view_key end
-    for key, value in pairs(extra or {}) do result[key] = value end
-    return result
-end
-
-local function drag_values(capture, x, y)
-    return {
-        x = x,
-        y = y,
-        dx = x - capture.last_x,
-        dy = y - capture.last_y,
-        total_dx = x - capture.start_x,
-        total_dy = y - capture.start_y,
-    }
-end
-
-local function semantic_drag_values(capture, x, y)
-    local values = drag_values(capture, x, y)
-    values.input_source = capture.source
-    values.semantic = true
-    values.mode = capture.mode
-    values.velocity_x = capture.velocity_x
-    values.velocity_y = capture.velocity_y
-    values.flick_x = capture.flick_x
-    values.flick_y = capture.flick_y
-    values.flicked = math.max(math.abs(capture.flick_x), math.abs(capture.flick_y))
-        >= capture.flick_threshold
-    return values
-end
-
-local function outward_velocity(current, previous, elapsed)
-    local changed_direction = current * previous < 0
-    local moved_outward = math.abs(current) > math.abs(previous) + 0.0001
-    if not changed_direction and not moved_outward then return nil end
-    return (current - previous) / elapsed
-end
-
-local function retain_flick(current, candidate)
-    if not candidate then return current end
-    if current == 0 or current * candidate < 0 or math.abs(candidate) > math.abs(current) then
-        return candidate
-    end
-    return current
 end
 
 function Context.new(config)
@@ -174,11 +83,13 @@ function Context:push(view, options)
         existing.exiting = false
         existing.view = view
         existing.model = options.model or existing.model
+        existing.style_overrides = options.styles or existing.style_overrides
         self.motion:enter_layer(existing)
         return existing.key
     elseif existing then
         existing.view = view
         if options.model ~= nil then existing.model = options.model end
+        if options.styles ~= nil then existing.style_overrides = options.styles end
         return existing.key
     end
     local entry = self.layers:push(view, options)
@@ -240,31 +151,24 @@ end
 
 function Context:editor_for(entry, node)
     local editors = self.editors[entry.key]
-    local editor = editors[node.id]
-    if not editor then
-        editor = TextEditor.new {value = node.value, max_length = node.max_length, filter = node.filter}
-        editors[node.id] = editor
-    else
-        editor.max_length = node.max_length
-        editor.filter = node.filter
-        if node.value ~= nil and not same_handle(self.focused, entry.key, node.id)
-            and tostring(node.value) ~= editor:value()
-        then
-            editor:set_value(node.value)
-        end
-    end
-    return editor
+    return TextField.editor_for(editors, node,
+        same_handle(self.focused, entry.key, node.id))
 end
 
 function Context:rebuild()
     local width, height = love.graphics.getDimensions()
     for _, entry in ipairs(self.layers.entries) do
         local root = entry.view.build(self:model_value(entry) or {})
+        local styles = self.styles
+        if entry.view.styles then styles = styles:with(entry.view.styles) end
+        if entry.style_overrides then styles = styles:with(entry.style_overrides) end
+        entry.styles = styles
         entry.layout = Layout.build(root, width, height, {
-            styles = self.styles,
-            fonts = self.fonts,
+            styles = styles,
+            fonts = self.fonts:with_styles(styles),
             icons = self.icons,
             editor_for = function(node) return self:editor_for(entry, node) end,
+            scale = self.styles:viewport_scale(width, height),
         })
     end
     if self.focused then
@@ -294,7 +198,7 @@ function Context:rebuild()
 end
 
 function Context:queue(action, source_id, extra, view_key)
-    local value = action_value(action, source_id, extra, view_key)
+    local value = Gestures.action_value(action, source_id, extra, view_key)
     if value then self.actions[#self.actions + 1] = value end
 end
 
@@ -305,7 +209,7 @@ function Context:take_actions()
 end
 
 function Context:start_hold(entry, item, source)
-    local options = hold_options(item.node)
+    local options = Gestures.hold_options(item.node)
     if not options then return false end
     local duration = tonumber(options.duration or options.seconds or 1)
     assert(duration and duration > 0, "a button hold duration must be greater than zero")
@@ -394,7 +298,7 @@ function Context:is_holding(entry, id)
 end
 
 function Context:start_semantic_drag(entry, item, source)
-    local options = semantic_drag_options(item.node)
+    local options = Gestures.semantic_drag_options(item.node)
     if not options then return false end
     if self.semantic_drag then
         if same_handle(self.semantic_drag, entry.key, item.node.id) then return true end
@@ -464,18 +368,18 @@ function Context:set_semantic_drag_input(event, source)
     if not capture then return false end
     local value = event.value or event
     local x, y = value.x or 0, value.y or 0
-    if event.direction then x, y = direction_vector(event.direction) end
+    if event.direction then x, y = Gestures.direction_vector(event.direction) end
     if event.phase == "released" then x, y = 0, 0 end
-    x = apply_deadzone(x, capture.deadzone)
-    y = apply_deadzone(y, capture.deadzone)
+    x = Gestures.apply_deadzone(x, capture.deadzone)
+    y = Gestures.apply_deadzone(y, capture.deadzone)
     if capture.axis == "horizontal" then y = 0
     elseif capture.axis == "vertical" then x = 0 end
     local now = love.timer.getTime()
     local elapsed = math.max(1 / 240, now - capture.input_time)
-    capture.flick_x = retain_flick(capture.flick_x,
-        outward_velocity(x, capture.raw_input_x, elapsed))
-    capture.flick_y = retain_flick(capture.flick_y,
-        outward_velocity(y, capture.raw_input_y, elapsed))
+    capture.flick_x = Gestures.retain_flick(capture.flick_x,
+        Gestures.outward_velocity(x, capture.raw_input_x, elapsed))
+    capture.flick_y = Gestures.retain_flick(capture.flick_y,
+        Gestures.outward_velocity(y, capture.raw_input_y, elapsed))
     capture.raw_input_x, capture.raw_input_y = x, y
     capture.input_time = now
     capture.input_x, capture.input_y = x, y
@@ -518,7 +422,7 @@ function Context:update_semantic_drag(dt)
     capture.velocity_x, capture.velocity_y = dx / dt, dy / dt
     if dx == 0 and dy == 0 then return end
     capture.x, capture.y = capture.x + dx, capture.y + dy
-    local values = semantic_drag_values(capture, capture.x, capture.y)
+    local values = Gestures.semantic_drag_values(capture, capture.x, capture.y)
     self:queue(item.node.dragged, item.node.id, values, entry.key)
     capture.last_x, capture.last_y = capture.x, capture.y
 end
@@ -530,7 +434,7 @@ function Context:end_semantic_drag(reason)
     local entry = self.layers:get(capture.key)
     local item = entry and entry.layout and entry.layout.by_id[capture.id]
     if item then
-        local values = semantic_drag_values(capture, capture.x, capture.y)
+        local values = Gestures.semantic_drag_values(capture, capture.x, capture.y)
         values.reason = reason
         values.cancelled = reason ~= nil and reason ~= "released" and reason ~= "flicked"
         self:queue(item.node.drag_ended, item.node.id, values, entry.key)
@@ -585,7 +489,7 @@ function Context:route_at(x, y)
         if layout then
             for region_index = #layout.hit_regions, 1, -1 do
                 local region = layout.hit_regions[region_index]
-                if point_in_item(region.item, x, y) then
+                if Gestures.point_in_item(region.item, x, y) then
                     return {
                         entry = entry,
                         item = region.interactive and region.item or nil,
@@ -658,24 +562,6 @@ end
 
 function Context:is_focused(entry, id)
     return same_handle(self.focused, entry.key, id)
-end
-
-function Context:cursor_from_x(item, x)
-    local style = item.style
-    local padding_x = Layout.resolve_length(style.padding_x or 0, item.rect.w, {
-        styles = self.styles,
-        scale = item.layout_scale,
-    }) or 0
-    local transformed_x = Transform.unapply(item.world_transform, x, self.pointer_y)
-    local local_x = (transformed_x or x) - item.rect.x - padding_x + (item.editor.scroll_x or 0)
-    if local_x <= 0 then return 0 end
-    local previous = 0
-    for position = 1, item.editor:length() do
-        local current = item.font:getWidth(item.editor:prefix(position))
-        if local_x <= (previous + current) / 2 then return position - 1 end
-        previous = current
-    end
-    return item.editor:length()
 end
 
 function Context:emit_editor_change(entry, item)
@@ -921,264 +807,23 @@ function Context:release_selection(source)
 end
 
 function Context:input(event)
-    assert(type(event) == "table", "ui2d input expects an event table")
-    local action = event.action or event.name or event.type
-    local source = event.source or "navigation"
-    if action == "accept" then
-        if event.phase == "released" then return self:release_selection(source) end
-        if event.phase == nil or event.phase == "pressed" then return self:accept_selection(source) end
-        return false
-    elseif action ~= "navigate" then
-        return false
-    end
-
-    local value = event.value or event
-    local x, y = value.x or 0, value.y or 0
-    if self.semantic_drag then return self:set_semantic_drag_input(event, source) end
-    if self.keyboard_pressed and self.keyboard_pressed.semantic_drag then
-        self.navigation_input = {x = x, y = y}
-        return true
-    end
-    local options = self:navigation_options_for(self:navigation_owner())
-    local direction = event.direction or Navigation.direction(x, y,
-        event.threshold or options.threshold or 0.5)
-    if event.phase == "released" then direction = nil end
-    if self.navigation_input.drag_latched then
-        self.navigation_input = {x = x, y = y, drag_latched = direction ~= nil}
-        return true
-    end
-    if event.phase == "pressed" and event.direction then
-        return self:navigate(event.direction, source)
-    end
-    if event.phase == "released" or not direction then
-        self.navigation_input = {x = x, y = y}
-        return false
-    end
-    local held = self.navigation_input
-    local changed = held.direction ~= direction
-    self.navigation_input = {
-        x = x,
-        y = y,
-        direction = direction,
-        source = source,
-        repeat_at = changed and (self.time + (options.repeat_delay or 0.35))
-            or held.repeat_at,
-    }
-    if changed then return self:navigate(direction, source) end
-    return true
+    return InputRouter.input(self, event)
 end
 
 function Context:field_keypressed(entry, item, key)
-    local editor = item.editor
-    local modifiers = self:modifiers()
-    local shortcut = modifiers.ctrl or modifiers.command
-    local changed = false
-    if shortcut and key == "a" then
-        editor:select_all()
-    elseif shortcut and key == "c" then
-        if editor:has_selection() then love.system.setClipboardText(editor:selected_text()) end
-    elseif shortcut and key == "x" then
-        if editor:has_selection() then
-            love.system.setClipboardText(editor:selected_text())
-            changed = editor:replace_selection("")
-        end
-    elseif shortcut and key == "v" then
-        changed = editor:insert(love.system.getClipboardText() or "")
-    elseif key == "backspace" then
-        changed = editor:delete_backward(shortcut)
-    elseif key == "delete" then
-        changed = editor:delete_forward(shortcut)
-    elseif key == "left" then
-        editor:move(-1, modifiers.shift, shortcut)
-    elseif key == "right" then
-        editor:move(1, modifiers.shift, shortcut)
-    elseif key == "home" then
-        editor:move_to(0, modifiers.shift)
-    elseif key == "end" then
-        editor:move_to(editor:length(), modifiers.shift)
-    elseif key == "return" or key == "kpenter" then
-        self:queue(item.node.submit, item.node.id, {value = editor:value()}, entry.key)
-    elseif key == "escape" then
-        self.focused = nil
-    else
-        return false
+    local result = TextField.keypressed(item.editor, key, self:modifiers())
+    if not result.handled then return false end
+    if result.changed then self:emit_editor_change(entry, item) end
+    if result.submit then
+        self:queue(item.node.submit, item.node.id, {value = item.editor:value()}, entry.key)
     end
-    if changed then self:emit_editor_change(entry, item) end
+    if result.blur then self.focused = nil end
     return true
 end
 
 function Context:event(name, ...)
-    if #self.layers.entries > 0 and not self.layers.entries[1].layout then self:rebuild() end
-    local args = {...}
-    if name == "resize" then
-        self:rebuild()
-        return #self.layers.entries > 0
-    elseif name == "focus" and args[1] == false then
-        self:cancel_hold("focus_lost")
-        self:end_semantic_drag("focus_lost")
-        self.pressed, self.pointer_capture, self.keyboard_pressed = nil, nil, nil
-        self.cancelled_pointer_button = nil
-        return false
-    elseif name == "mousemoved" then
-        self.pointer_x, self.pointer_y = args[1], args[2]
-        self:use_pointer_selection()
-        local capture = self.pointer_capture
-        if capture then
-            local entry = self.layers:get(capture.key)
-            local item = entry and entry.layout.by_id[capture.id]
-            local options = item and hold_options(item.node)
-            if options and options.cancel_on_leave ~= false
-                and not point_in_item(item, self.pointer_x, self.pointer_y)
-            then
-                self:cancel_hold("pointer_left")
-                self.pressed = nil
-            end
-            if item and capture.draggable then
-                local values = drag_values(capture, self.pointer_x, self.pointer_y)
-                self:queue(item.node.dragged, item.node.id, values, entry.key)
-            end
-            capture.last_x, capture.last_y = self.pointer_x, self.pointer_y
-        end
-        if capture and capture.kind == "text_field" then
-            local entry = self.layers:get(capture.key)
-            local item = entry and entry.layout.by_id[capture.id]
-            if item then item.editor:move_to(self:cursor_from_x(item, self.pointer_x), true) end
-        end
-        self:update_hover()
-        return self.pointer_capture ~= nil or self:route_at(self.pointer_x, self.pointer_y).consumed
-    elseif name == "mousepressed" then
-        self.pointer_x, self.pointer_y = args[1], args[2]
-        if self.input_mode_policy == "automatic" and self.selection_mode ~= "pointer" then
-            return self:route_at(self.pointer_x, self.pointer_y).consumed
-        end
-        self:use_pointer_selection()
-        if self.cancelled_pointer_button == args[3] then self.cancelled_pointer_button = nil end
-        local route = self:route_at(self.pointer_x, self.pointer_y)
-        local item = route.item
-        if args[3] == 1 and item and item.enabled then
-            local handle = {key = route.entry.key, id = item.node.id}
-            self.focused = item.kind == "text_field" and handle or nil
-            self.pressed = {key = handle.key, id = handle.id}
-            self.pointer_capture = {
-                key = handle.key,
-                id = handle.id,
-                kind = item.kind,
-                start_x = self.pointer_x,
-                start_y = self.pointer_y,
-                last_x = self.pointer_x,
-                last_y = self.pointer_y,
-                draggable = item.node.drag_started ~= nil or item.node.dragged ~= nil
-                    or item.node.drag_ended ~= nil,
-            }
-            if item.kind == "text_field" then
-                item.editor:move_to(self:cursor_from_x(item, self.pointer_x), false)
-            end
-            self:queue(item.node.drag_started, item.node.id, {
-                x = self.pointer_x,
-                y = self.pointer_y,
-                dx = 0,
-                dy = 0,
-                total_dx = 0,
-                total_dy = 0,
-            }, route.entry.key)
-            self:queue(item.node.press_started, item.node.id,
-                {input_source = "pointer"}, route.entry.key)
-            if item.kind == "button" then
-                if not self:start_hold(route.entry, item, "pointer") then
-                    self:queue(item.node.action, item.node.id,
-                        {input_source = "pointer"}, route.entry.key)
-                end
-            end
-            self:update_hover()
-            return true
-        end
-        self.focused = nil
-        return route.consumed
-    elseif name == "wheelmoved" then
-        return self:route_at(self.pointer_x, self.pointer_y).consumed
-    elseif name == "mousereleased" then
-        self.pointer_x, self.pointer_y = args[1], args[2]
-        if self.cancelled_pointer_button == args[3] then
-            self.cancelled_pointer_button = nil
-            self.pressed = nil
-            self:update_hover()
-            return true
-        end
-        local capture = self.pointer_capture
-        if args[3] == 1 and capture then
-            local entry = self.layers:get(capture.key)
-            local item = entry and entry.layout.by_id[capture.id]
-            local values = drag_values(capture, self.pointer_x, self.pointer_y)
-            self:release_hold(capture.key, capture.id)
-            if item and capture.draggable then
-                self:queue(item.node.drag_ended, item.node.id, values, entry.key)
-            end
-            if item then
-                self:queue(item.node.press_ended, item.node.id,
-                    {input_source = "pointer"}, entry.key)
-            end
-            self.pressed, self.pointer_capture = nil, nil
-            self:update_hover()
-            return true
-        end
-        return self:route_at(self.pointer_x, self.pointer_y).consumed
-    elseif name == "keypressed" then
-        local key = args[1]
-        local owner = self:keyboard_owner()
-        local entry = self.focused and self.layers:get(self.focused.key)
-        local item = entry and owner == entry and entry.layout.by_id[self.focused.id]
-        if item and item.enabled and item.kind == "text_field"
-            and self:field_keypressed(entry, item, key)
-        then
-            return true
-        end
-        if key == "tab" then return self:focus_adjacent(self:modifiers().shift and -1 or 1) end
-        if key == "up" or key == "down" or key == "left" or key == "right" then
-            if self.semantic_drag then
-                return self:set_semantic_drag_input({direction = key, phase = "pressed"}, "keyboard")
-            end
-            if self.keyboard_pressed and self.keyboard_pressed.semantic_drag then return true end
-            return self:navigate(key, "keyboard")
-        end
-        if key == "space" or key == "return" or key == "kpenter" then
-            return self:accept_selection("keyboard")
-        end
-        return owner ~= nil
-    elseif name == "keyreleased" then
-        local key = args[1]
-        if self.semantic_drag and (key == "up" or key == "down" or key == "left" or key == "right") then
-            return self:set_semantic_drag_input({direction = key, phase = "released"}, "keyboard")
-        end
-        if self.navigation_input.drag_latched
-            and (key == "up" or key == "down" or key == "left" or key == "right")
-        then
-            self.navigation_input = {x = 0, y = 0}
-            return true
-        end
-        if self.keyboard_pressed and (key == "space" or key == "return" or key == "kpenter") then
-            if self.keyboard_pressed.semantic then return self:release_selection("keyboard") end
-            local pressed = self.keyboard_pressed
-            local entry = self.layers:get(pressed.key)
-            local item = entry and entry.layout and entry.layout.by_id[pressed.id]
-            if item then self:queue(item.node.press_ended, item.node.id,
-                {input_source = "keyboard"}, entry.key) end
-            self.keyboard_pressed, self.pressed = nil, nil
-            return true
-        end
-        return self:keyboard_owner() ~= nil
-    elseif name == "textinput" then
-        local owner = self:keyboard_owner()
-        local entry = self.focused and self.layers:get(self.focused.key)
-        local item = entry and owner == entry and entry.layout.by_id[self.focused.id]
-        if item and item.kind == "text_field" and item.enabled then
-            if item.editor:insert(args[1] or "") then self:emit_editor_change(entry, item) end
-            return true
-        end
-        return owner ~= nil
-    end
-    return false
+    return InputRouter.event(self, name, ...)
 end
-
 function Context:rect(id, view_key)
     if view_key then
         local entry = self.layers:get(view_key)

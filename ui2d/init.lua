@@ -1,12 +1,13 @@
-local Context = require("ui2d.context")
-local Nodes = require("ui2d.nodes")
-local StyleSheetModule = require("ui2d.style_sheet")
-local TextEditor = require("ui2d.text_editor")
-local Units = require("ui2d.units")
-local Components = require("ui2d.components")
+local Context = require("ui2d.core.context")
+local Nodes = require("ui2d.core.nodes")
+local StyleSheetModule = require("ui2d.core.style_sheet")
+local Units = require("ui2d.core.units")
+local Button = require("ui2d.components.button")
+local TextField = require("ui2d.components.text_field")
+local SegmentedControl = require("ui2d.components.segmented_control")
 
 local UI = {
-    TextEditor = TextEditor,
+    TextEditor = TextField.Editor,
     percent = Units.percent,
     em = Units.em,
     rem = Units.rem,
@@ -20,9 +21,9 @@ local UI = {
     text = Nodes.text,
     icon = Nodes.icon,
     spacer = Nodes.spacer,
-    button = Nodes.button,
-    text_field = Nodes.text_field,
-    segmented_control = Components.segmented_control,
+    button = Button.new,
+    text_field = TextField.new,
+    segmented_control = SegmentedControl.new,
 }
 
 UI.StyleSheet = setmetatable({new = StyleSheetModule.new}, {

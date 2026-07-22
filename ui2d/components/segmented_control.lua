@@ -1,8 +1,9 @@
-local Nodes = require("ui2d.nodes")
-local StyleSheet = require("ui2d.style_sheet")
-local Units = require("ui2d.units")
+local Nodes = require("ui2d.core.nodes")
+local StyleSheet = require("ui2d.core.style_sheet")
+local Units = require("ui2d.core.units")
+local Button = require("ui2d.components.button")
 
-local Components = {}
+local SegmentedControl = {}
 
 local function option_value(option)
     return type(option) == "table" and option.value or option
@@ -28,7 +29,7 @@ local function changed_action(action, id, value, index)
     return result
 end
 
-function Components.segmented_control(spec)
+function SegmentedControl.new(spec)
     spec = spec or {}
     assert(type(spec.id) == "string" and spec.id ~= "",
         "segmented_control requires a non-empty id")
@@ -43,7 +44,7 @@ function Components.segmented_control(spec)
     local buttons = {}
     for index, option in ipairs(spec.options) do
         local value = option_value(option)
-        buttons[#buttons + 1] = Nodes.button {
+        buttons[#buttons + 1] = Button.new {
             id = spec.id .. "-" .. tostring(value),
             flex = 1,
             height = "fill",
@@ -58,6 +59,7 @@ function Components.segmented_control(spec)
 
     return Nodes.stack {
         id = spec.id,
+        styles = spec.styles,
         width = spec.width or "fill",
         height = spec.height or 46,
         padding = spec.padding == nil and 3 or spec.padding,
@@ -88,4 +90,4 @@ function Components.segmented_control(spec)
     }
 end
 
-return Components
+return SegmentedControl

@@ -14,6 +14,11 @@ local DRAWER_CLOSED = 1
 local DRAWER_CLOSE_THRESHOLD = 0.84
 
 local tooltip_modes = {"top-right", "pointer", "button"}
+local tooltip_instance_styles = {
+    colors = {
+        accent = {1, 0.68, 0.24, 1},
+    },
+}
 local gamepad_directions = {
     dpup = "up",
     dpdown = "down",
@@ -57,6 +62,7 @@ function App.new()
         drawer_close_at = 0,
         tooltip_mode_index = 1,
         tooltip_animate_until = 0,
+        menu_title = "Blocking View Layer",
         gamepad_axes = {},
     }, App)
 
@@ -98,6 +104,7 @@ function App:load()
                 layer = "tooltip",
                 pointer = "pass",
                 keyboard = "pass",
+                styles = tooltip_instance_styles,
                 model = function() return self:tooltip_model() end,
             })
         end
@@ -193,7 +200,10 @@ function App:active_tooltip_mode()
 end
 
 function App:menu_model()
-    return {drawer_open = self.drawer_open}
+    return {
+        drawer_open = self.drawer_open,
+        title = self.menu_title,
+    }
 end
 
 function App:drawer_model()
@@ -268,6 +278,8 @@ function App:dispatch(action)
             transition = fade,
             model = function() return self:menu_model() end,
         })
+    elseif action.type == "rename_menu" then
+        self.menu_title = action.value
     elseif action.type == "close_menu" then
         self:close_menu()
     elseif action.type == "toggle_drawer" then
@@ -309,6 +321,7 @@ function App:dispatch(action)
             layer = "tooltip",
             pointer = "pass",
             keyboard = "pass",
+            styles = tooltip_instance_styles,
             transition = fade,
             model = function() return self:tooltip_model() end,
         })

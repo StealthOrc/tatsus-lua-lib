@@ -5,6 +5,10 @@ function FontCache.new(styles)
     return setmetatable({styles = styles, cache = {}}, FontCache)
 end
 
+function FontCache:with_styles(styles)
+    return setmetatable({styles = styles, cache = self.cache}, FontCache)
+end
+
 function FontCache:text_style(style)
     if type(style) == "table" then
         local result = self.styles:text_style("default")
@@ -19,7 +23,8 @@ function FontCache:get(style, scale)
     local family = assert(self.styles.values.fonts[style.font or "default"], "unknown font family: " .. tostring(style.font))
     local path = family[style.weight or "regular"] or family.regular
     local size = math.max(1, math.floor((style.size or 16) * scale + 0.5))
-    local key = tostring(path or "<default>") .. "\0" .. tostring(size)
+    local filter = family.filter or "nearest"
+    local key = table.concat({tostring(path or "<default>"), tostring(size), filter}, "\0")
     if not self.cache[key] then
         local font
         if path then
@@ -31,7 +36,6 @@ function FontCache:get(style, scale)
         else
             font = love.graphics.newFont(size)
         end
-        local filter = family.filter or "nearest"
         font:setFilter(filter, filter)
         self.cache[key] = font
     end

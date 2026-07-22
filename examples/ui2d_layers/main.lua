@@ -64,6 +64,10 @@ function love.joystickremoved(...)
     app:joystickremoved(...)
 end
 
+function love.focus(...)
+    app:event("focus", ...)
+end
+
 function love.resize(...)
     app:event("resize", ...)
 end

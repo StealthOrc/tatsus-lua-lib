@@ -60,6 +60,10 @@ function love.joystickremoved(...)
     app:input_event("joystickremoved", ...)
 end
 
+function love.focus(...)
+    app:event("focus", ...)
+end
+
 function love.resize(width, height)
     app:resize(width, height)
 end

@@ -1,6 +1,6 @@
 local Animation = require("animation")
-local Layout = require("ui2d.layout")
-local StyleSheet = require("ui2d.style_sheet")
+local Layout = require("ui2d.core.layout")
+local StyleSheet = require("ui2d.core.style_sheet")
 
 local Motion = {}
 Motion.__index = Motion

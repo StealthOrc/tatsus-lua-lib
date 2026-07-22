@@ -100,6 +100,7 @@ local function path_value(root, path)
 end
 
 function StyleSheet.new(config)
+    if getmetatable(config) == StyleSheet then config = config.values end
     local values = merge(copy(defaults), config or {})
     return setmetatable({values = values}, StyleSheet)
 end
@@ -168,7 +169,8 @@ function StyleSheet:viewport_scale(width, height)
 end
 
 function StyleSheet:with(overrides)
-    return StyleSheet.new(merge(copy(self.values), overrides or {}))
+    if getmetatable(overrides) == StyleSheet then overrides = overrides.values end
+    return setmetatable({values = merge(copy(self.values), overrides or {})}, StyleSheet)
 end
 
 function StyleSheet.interaction_state(states, name, seen)

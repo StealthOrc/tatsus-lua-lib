@@ -45,6 +45,7 @@ function LayerStack:push(view, options)
         key = key,
         view = view,
         model = options.model or {},
+        style_overrides = options.styles,
         layer = self:resolve_layer(options.layer),
         pointer = options.pointer or "block",
         keyboard = options.keyboard or "block",

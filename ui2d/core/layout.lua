@@ -1,63 +1,27 @@
-local Units = require("ui2d.units")
-local Nodes = require("ui2d.nodes")
-local Transform = require("ui2d.transform")
-local Navigation = require("ui2d.navigation")
+local Transform = require("ui2d.core.transform")
+local Navigation = require("ui2d.core.navigation")
+local LayoutValues = require("ui2d.core.layout_values")
+local Button = require("ui2d.components.button")
+local TextField = require("ui2d.components.text_field")
 
 local Layout = {}
 
-local function resolve_token(styles, value)
-    local seen = {}
-    while type(value) == "string" and value ~= "fill" and value ~= "content" do
-        if seen[value] then error("cyclic stylesheet token: " .. value) end
-        seen[value] = true
-        local resolved = styles:get(value)
-        if resolved == nil then break end
-        value = resolved
-    end
-    return value
-end
-
-local function length(value, available, env, font_size)
-    value = resolve_token(env.styles, value)
-    return Units.resolve(value, available, {
-        scale = env.scale,
-        font_size = font_size,
-        root_font_size = env.styles.values.root_font_size * env.scale,
-    })
-end
-
-local function dimension(value, available, content, env, font_size)
-    value = resolve_token(env.styles, value)
-    if value == nil or value == "content" then return content end
-    if value == "fill" then return available end
-    return length(value, available, env, font_size)
-end
-
-local function insets(value, available_w, available_h, env, font_size)
-    value = resolve_token(env.styles, value or 0)
-    if type(value) ~= "table" or Units.is(value) then
-        local horizontal = length(value, available_w, env, font_size) or 0
-        local vertical = length(value, available_h, env, font_size) or 0
-        return {left = horizontal, right = horizontal, top = vertical, bottom = vertical}
-    end
-    local x = value.x or value.horizontal or 0
-    local y = value.y or value.vertical or 0
-    return {
-        left = length(value.left or x, available_w, env, font_size) or 0,
-        right = length(value.right or x, available_w, env, font_size) or 0,
-        top = length(value.top or y, available_h, env, font_size) or 0,
-        bottom = length(value.bottom or y, available_h, env, font_size) or 0,
-    }
-end
-
-local function overlay_style(style, node)
-    for key in pairs(style) do
-        if node[key] ~= nil then style[key] = node[key] end
-    end
-    return style
-end
+local resolve_token = LayoutValues.resolve_token
+local length = LayoutValues.length
+local dimension = LayoutValues.dimension
+local insets = LayoutValues.insets
 
 local measure
+
+local function scoped_environment(node, env)
+    if not node.styles then return env end
+    local styles = env.styles:with(node.styles)
+    local scoped = {}
+    for key, value in pairs(env) do scoped[key] = value end
+    scoped.styles = styles
+    scoped.fonts = env.fonts:with_styles(styles)
+    return scoped
+end
 
 local function measure_text(node, env)
     local text = tostring(node.value or "")
@@ -142,89 +106,19 @@ local function measure_container(node, available_w, available_h, env)
     }
 end
 
-local function shorthand_button_content(node, style, env)
-    if node.content then return node.content end
-    if #(node.children or {}) > 0 then
-        return Nodes.row {gap = style.gap, align = "center", children = node.children}
-    end
-    local children = {}
-    local text_style = node.text_style or style.text
-    local resolved_text = env.fonts:text_style(text_style)
-    if node.icon then
-        children[#children + 1] = Nodes.icon {
-            name = node.icon,
-            size = node.icon_size or style.icon_size or resolved_text.size * 1.2,
-            tint = node.icon_tint or style.foreground,
-        }
-    end
-    if node.label ~= nil then
-        children[#children + 1] = Nodes.text {
-            value = node.label,
-            style = text_style,
-            color = node.foreground or style.foreground,
-        }
-    end
-    return Nodes.row {gap = node.gap or style.gap, align = "center", children = children}
-end
-
-local function measure_button(node, available_w, available_h, env)
-    assert(type(node.id) == "string" and node.id ~= "", "button requires a non-empty id")
-    local style = overlay_style(env.styles:button_style(node.style), node)
-    local padding = {
-        left = length(style.padding_x or 0, available_w, env),
-        right = length(style.padding_x or 0, available_w, env),
-        top = length(style.padding_y or 0, available_h, env),
-        bottom = length(style.padding_y or 0, available_h, env),
-    }
-    local inner_w = math.max(0, available_w - padding.left - padding.right)
-    local inner_h = math.max(0, available_h - padding.top - padding.bottom)
-    local content = measure(shorthand_button_content(node, style, env), inner_w, inner_h, env)
-    local content_w = content.w + padding.left + padding.right
-    local content_h = content.h + padding.top + padding.bottom
-    local min_w = length(style.min_width or 0, available_w, env) or 0
-    local min_h = length(style.min_height or 0, available_h, env) or 0
-    return {
-        kind = "button",
-        node = node,
-        style = style,
-        children = {content},
-        padding = padding,
-        enabled = node.enabled ~= false,
-        interactive = true,
-        w = math.max(min_w, dimension(node.width, available_w, content_w, env)),
-        h = math.max(min_h, dimension(node.height, available_h, content_h, env)),
-    }
-end
-
-local function measure_text_field(node, available_w, available_h, env)
-    assert(type(node.id) == "string" and node.id ~= "", "text_field requires a non-empty id")
-    local style = overlay_style(env.styles:text_field_style(node.style), node)
-    local text_style = env.fonts:text_style(node.text_style or style.text)
-    local font = env.fonts:get(text_style, env.scale)
-    local min_w = length(style.min_width or 0, available_w, env) or 0
-    local min_h = length(style.min_height or 0, available_h, env) or 0
-    return {
-        kind = "text_field",
-        node = node,
-        style = style,
-        text_style = text_style,
-        font = font,
-        editor = env.editor_for(node),
-        enabled = node.enabled ~= false,
-        interactive = true,
-        w = math.max(min_w, dimension(node.width, available_w, min_w, env)),
-        h = math.max(min_h, dimension(node.height, available_h, min_h, env)),
-    }
-end
-
 measure = function(node, available_w, available_h, env)
     assert(type(node) == "table" and node.kind, "ui2d layout received an invalid node")
-    if node.kind == "text" then return measure_text(node, env) end
-    if node.kind == "icon" then return measure_icon(node, available_w, available_h, env) end
-    if node.kind == "spacer" then return measure_spacer(node, available_w, available_h, env) end
-    if node.kind == "button" then return measure_button(node, available_w, available_h, env) end
-    if node.kind == "text_field" then return measure_text_field(node, available_w, available_h, env) end
-    return measure_container(node, available_w, available_h, env)
+    env = scoped_environment(node, env)
+    local item
+    if node.kind == "text" then item = measure_text(node, env)
+    elseif node.kind == "icon" then item = measure_icon(node, available_w, available_h, env)
+    elseif node.kind == "spacer" then item = measure_spacer(node, available_w, available_h, env)
+    elseif node.kind == "button" then item = Button.measure(node, available_w, available_h, env, measure)
+    elseif node.kind == "text_field" then item = TextField.measure(node, available_w, available_h, env)
+    else item = measure_container(node, available_w, available_h, env) end
+    item.styles = env.styles
+    item.env = env
+    return item
 end
 
 local function anchored(parent, width, height, anchor)
@@ -356,7 +250,7 @@ end
 
 function Layout.build(root, width, height, env)
     assert(root.kind == "screen", "a ui2d view must return UI.screen")
-    env.scale = env.styles:viewport_scale(width, height)
+    env.scale = env.scale or env.styles:viewport_scale(width, height)
     local measured = measure(root, width, height, env)
     measured.w, measured.h = width, height
     local result = {
@@ -383,8 +277,8 @@ function Layout.resolve_visual_transform(item, layout, source)
     local origin_x = source.origin_x == nil and 0.5 or source.origin_x
     local origin_y = source.origin_y == nil and 0.5 or source.origin_y
     return {
-        translate_x = length(source.translate_x or source.x or 0, item.rect.w, layout.env) or 0,
-        translate_y = length(source.translate_y or source.y or 0, item.rect.h, layout.env) or 0,
+        translate_x = length(source.translate_x or source.x or 0, item.rect.w, item.env or layout.env) or 0,
+        translate_y = length(source.translate_y or source.y or 0, item.rect.h, item.env or layout.env) or 0,
         scale_x = source.scale_x or scale,
         scale_y = source.scale_y or scale,
         rotation = source.rotation or 0,

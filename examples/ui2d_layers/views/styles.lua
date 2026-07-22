@@ -8,10 +8,6 @@ return UI.StyleSheet {
         max_scale = 2,
     },
     colors = {
-        world = {0.025, 0.04, 0.065, 1},
-        overlay = {0.035, 0.045, 0.075, 0.97},
-        panel = {0.09, 0.11, 0.17, 1},
-        tooltip = {0.13, 0.15, 0.22, 1},
         accent = {0.95, 0.31, 0.23, 1},
         white = {0.96, 0.97, 1, 1},
         ink = {0.12, 0.09, 0.07, 1},
@@ -48,18 +44,6 @@ return UI.StyleSheet {
             transition = {
                 transform = {duration = 0.16, ease = "out_cubic"},
             },
-        },
-        drawer_handle = {
-            background = "tooltip",
-            background_hovered = {0.20, 0.23, 0.32, 1},
-            background_pressed = {0.26, 0.29, 0.38, 1},
-            foreground = "white",
-            min_width = 168,
-            min_height = 26,
-            padding_x = 18,
-            padding_y = 3,
-            radius = 13,
-            text = "card_body",
         },
     },
 }

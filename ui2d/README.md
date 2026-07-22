@@ -77,6 +77,47 @@ Forward LÖVE callbacks with `ui:event(name, ...)`, call `ui:update(dt)` before 
 
 The runtime order is: input callbacks queue semantic actions, `ui:update(dt)` dispatches those actions and rebuilds the declarative view from the latest model, then `ui:draw()` renders the resulting layout. Omit `dispatch` and call `ui:take_actions()` when the game prefers to drain the queue itself.
 
+## Scoped styles
+
+The stylesheet passed to `UI.new` is the application theme. Views can own partial overrides without repeating that theme:
+
+```lua
+local PauseView = UI.view("pause", {
+    styles = {
+        colors = {accent = {0.92, 0.24, 0.30, 1}},
+        buttons = {primary = {background = "accent", radius = 10}},
+    },
+    build = function(model)
+        return UI.screen {
+            UI.button {id = "resume", style = "primary", label = "Resume", action = "resume"},
+        }
+    end,
+})
+```
+
+A mounted View Layer may override that view again. This is useful when the same view needs a different skin in one context:
+
+```lua
+ui:push(PauseView, {
+    styles = {
+        colors = {accent = {0.26, 0.78, 1, 1}},
+    },
+})
+```
+
+Any node can introduce a style scope for itself and its descendants:
+
+```lua
+UI.panel {
+    styles = {
+        colors = {accent = {0.72, 0.32, 0.96, 1}},
+    },
+    UI.button {id = "special", style = "primary", label = "Special action"},
+}
+```
+
+Style resolution proceeds from UI2D defaults to the application theme, view styles, mounted-layer styles, ancestor scopes, the selected named style, direct node properties, and finally interaction state. Every table is a partial deep override, so changing `colors.accent` preserves unrelated typography, spacing, and control styles. Tokens resolve against the nearest scope. View and node scopes do not change the context-wide viewport scale, keeping layered views in one coordinate system.
+
 ## View Layers and input routing
 
 `show` replaces the Layer Stack with one base View Layer. `push` adds another; `remove` removes a layer by key, and `pop` removes the topmost layer. Layers render from back to front and route input through the exact reverse order.
@@ -223,7 +264,24 @@ When no file is assigned to a family, LÖVE's default font is used. Configured f
 
 SVG files are registered by semantic name in `UI.new {icons = {...}}` and used with either `UI.icon` or a button's `icon` shorthand. The built-in lightweight renderer supports paths (`M/L/H/V/C/S/Q/T/Z`), lines, circles, fills, strokes, tinting, `viewBox`, and compound even-odd/non-zero fills. It intentionally does not implement the entire browser SVG standard; pre-flatten transforms and unsupported elements or arc commands in exported assets.
 
-Buttons activate immediately on mouse press-down. Selected buttons likewise activate on the Space/Enter keypress; release only clears their pressed visual state and pointer/keyboard capture. Text fields support UTF-8 cursor positions, pointer selection, clipboard shortcuts, word deletion, Home/End, and declarative change/submit actions.
+Buttons activate immediately on mouse press-down. Selected buttons likewise activate on the Space/Enter keypress; release only clears their pressed visual state and pointer/keyboard capture.
+
+## Text fields
+
+Text fields keep their editing state inside the UI context while accepting declarative values and actions:
+
+```lua
+UI.text_field {
+    id = "display-name",
+    value = model.display_name,
+    placeholder = "Display name",
+    changed = "rename_player",
+    submit = "confirm_name",
+    max_length = 32,
+}
+```
+
+The `changed` and `submit` actions include the current `value`. Text fields support UTF-8 cursor positions, click-and-drag pointer selection, Shift selection, Ctrl/Cmd+Shift word selection, Ctrl/Cmd+A/C/X/V, Ctrl/Cmd+Backspace/Delete, Home/End, horizontal scrolling, and declarative filtering. Forward `mousemoved`, `mousepressed`, `mousereleased`, `keypressed`, `keyreleased`, and `textinput` through `ui:event`.
 
 A button with `hold` delays its ordinary `action` until it has remained pressed for the requested duration. Pointer holds cancel when the pointer leaves the button by default; early pointer, keyboard, or controller release also cancels and resets progress. The same behavior works through semantic `accept` input:
 
@@ -361,3 +419,7 @@ The UI in Motion example exercises full-screen blocking, a partial pass-through 
 Set `UI2D_DEMO_PERKS=1` before launching to open the example directly with the single drawer fully raised.
 
 The example also forwards a small handwritten controller adapter directly into `ui:input`: D-pad or left stick navigates, the standardized lower face button accepts, and B invokes the same contextual close actions as the drawer and menu buttons. It intentionally does not require the independent `input` bindings module.
+
+## Internal structure
+
+The public interface remains `require("ui2d")`. Internally, `core/` owns layout, rendering, input routing, View Layers, navigation, motion, resources, units, and style resolution. `components/` contains one behavior-rich control per file: button, text field, and segmented control. Structural declarations such as screen, row, column, panel, text, icon, and spacer remain together in `core/nodes.lua` because they are lightweight node constructors rather than independent controls.
