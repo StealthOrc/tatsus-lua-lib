@@ -12,6 +12,7 @@ local drawer_open = false
 local drawer_progress = DRAWER_LOWERED
 local drawer_dragging = false
 local drawer_drag_origin = DRAWER_LOWERED
+local drawer_settle_duration = 0.38
 local drawer_close_pending = false
 local drawer_close_at = 0
 local tooltip_modes = {"top-right", "pointer", "button"}
@@ -209,7 +210,10 @@ local Drawer = UI.view("drawer", function(model)
             border_width = 2,
             transform = {translate_y = UI.percent(progress)},
             transition = {
-                transform = {duration = model.dragging and 0 or 0.38, ease = "out_cubic"},
+                transform = {
+                    duration = model.dragging and 0 or (model.settle_duration or 0.38),
+                    ease = "out_cubic",
+                },
             },
             UI.column {
                 anchor = "top-center",
@@ -220,7 +224,13 @@ local Drawer = UI.view("drawer", function(model)
                     id = "drawer-grab-handle",
                     style = "drawer_handle",
                     label = "=  DRAG DRAWER  =",
-                    semantic_drag = {axis = "vertical", speed = 720},
+                    semantic_drag = {
+                        mode = "flick",
+                        axis = "vertical",
+                        max_distance = 92,
+                        response = 20,
+                        flick_threshold = 8,
+                    },
                     drag_started = "drawer_drag_start",
                     dragged = "drawer_drag_move",
                     drag_ended = "drawer_drag_end",
@@ -373,7 +383,11 @@ local slide = {
 }
 
 local function drawer_model()
-    return {progress = drawer_progress, dragging = drawer_dragging}
+    return {
+        progress = drawer_progress,
+        dragging = drawer_dragging,
+        settle_duration = drawer_settle_duration,
+    }
 end
 
 local function tooltip_model()
@@ -394,6 +408,7 @@ local function show_drawer()
     drawer_open = true
     drawer_progress = DRAWER_LOWERED
     drawer_dragging = false
+    drawer_settle_duration = 0.38
     drawer_close_pending = false
     ui:push(Drawer, {
         key = "drawer",
@@ -450,6 +465,7 @@ ui = UI.new {
             ui:remove("tooltip")
             drawer_drag_origin = drawer_progress
             drawer_dragging = true
+            drawer_settle_duration = 0.38
         elseif action.type == "drawer_drag_move" then
             drawer_progress = math.max(DRAWER_EXPANDED, math.min(DRAWER_CLOSED,
                 drawer_drag_origin + action.total_dy / math.max(1, love.graphics.getHeight())))
@@ -457,6 +473,23 @@ ui = UI.new {
             drawer_dragging = false
             if action.cancelled then
                 drawer_progress = drawer_drag_origin
+            elseif action.semantic then
+                local strength = clamp((math.abs(action.flick_y) - 8) / 32, 0, 1)
+                drawer_settle_duration = 0.30 - strength * 0.12
+                if action.flicked and action.flick_y < 0 then
+                    drawer_progress = DRAWER_EXPANDED
+                elseif action.flicked and action.flick_y > 0 then
+                    if drawer_drag_origin < 0.335 then
+                        drawer_progress = DRAWER_LOWERED
+                    else
+                        drawer_progress = DRAWER_CLOSED
+                        drawer_open = false
+                        drawer_close_pending = true
+                        drawer_close_at = love.timer.getTime() + drawer_settle_duration
+                    end
+                else
+                    drawer_progress = drawer_drag_origin
+                end
             elseif action.total_dy < -3 then
                 drawer_progress = DRAWER_EXPANDED
             elseif action.total_dy > 3 then

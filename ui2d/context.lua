@@ -85,6 +85,35 @@ local function drag_values(capture, x, y)
     }
 end
 
+local function semantic_drag_values(capture, x, y)
+    local values = drag_values(capture, x, y)
+    values.input_source = capture.source
+    values.semantic = true
+    values.mode = capture.mode
+    values.velocity_x = capture.velocity_x
+    values.velocity_y = capture.velocity_y
+    values.flick_x = capture.flick_x
+    values.flick_y = capture.flick_y
+    values.flicked = math.max(math.abs(capture.flick_x), math.abs(capture.flick_y))
+        >= capture.flick_threshold
+    return values
+end
+
+local function outward_velocity(current, previous, elapsed)
+    local changed_direction = current * previous < 0
+    local moved_outward = math.abs(current) > math.abs(previous) + 0.0001
+    if not changed_direction and not moved_outward then return nil end
+    return (current - previous) / elapsed
+end
+
+local function retain_flick(current, candidate)
+    if not candidate then return current end
+    if current == 0 or current * candidate < 0 or math.abs(candidate) > math.abs(current) then
+        return candidate
+    end
+    return current
+end
+
 function Context.new(config)
     config = config or {}
     local input_mode_policy = config.input_mode or "automatic"
@@ -375,6 +404,9 @@ function Context:start_semantic_drag(entry, item, source)
     local x, y = rect.x + rect.w / 2, rect.y + rect.h / 2
     local deadzone = math.max(0, math.min(0.95, tonumber(options.deadzone) or 0.15))
     local speed = math.max(0, tonumber(options.speed) or 640) * (item.layout_scale or 1)
+    local mode = options.mode or "continuous"
+    assert(mode == "continuous" or mode == "flick",
+        "semantic_drag mode must be continuous or flick")
     local axis = options.axis
     assert(axis == nil or axis == "horizontal" or axis == "vertical",
         "semantic_drag axis must be horizontal or vertical")
@@ -390,9 +422,22 @@ function Context:start_semantic_drag(entry, item, source)
         input_x = 0,
         input_y = 0,
         speed = speed,
+        mode = mode,
+        max_distance = math.max(0, tonumber(options.max_distance) or 96) * (item.layout_scale or 1),
+        response = math.max(0, tonumber(options.response) or 18),
+        flick_threshold = math.max(0, tonumber(options.flick_threshold) or 8),
         deadzone = deadzone,
         axis = axis,
         source = source,
+        offset_x = 0,
+        offset_y = 0,
+        velocity_x = 0,
+        velocity_y = 0,
+        flick_x = 0,
+        flick_y = 0,
+        raw_input_x = 0,
+        raw_input_y = 0,
+        input_time = love.timer.getTime(),
     }
     self.navigation_input = {x = 0, y = 0}
     self:queue(item.node.drag_started, item.node.id, {
@@ -404,6 +449,12 @@ function Context:start_semantic_drag(entry, item, source)
         total_dy = 0,
         input_source = source,
         semantic = true,
+        mode = mode,
+        velocity_x = 0,
+        velocity_y = 0,
+        flick_x = 0,
+        flick_y = 0,
+        flicked = false,
     }, entry.key)
     return true
 end
@@ -419,9 +470,23 @@ function Context:set_semantic_drag_input(event, source)
     y = apply_deadzone(y, capture.deadzone)
     if capture.axis == "horizontal" then y = 0
     elseif capture.axis == "vertical" then x = 0 end
+    local now = love.timer.getTime()
+    local elapsed = math.max(1 / 240, now - capture.input_time)
+    capture.flick_x = retain_flick(capture.flick_x,
+        outward_velocity(x, capture.raw_input_x, elapsed))
+    capture.flick_y = retain_flick(capture.flick_y,
+        outward_velocity(y, capture.raw_input_y, elapsed))
+    capture.raw_input_x, capture.raw_input_y = x, y
+    capture.input_time = now
     capture.input_x, capture.input_y = x, y
     capture.source = source or capture.source
     self.navigation_input = {x = x, y = y}
+    if capture.mode == "flick" and x == 0 and y == 0
+        and math.max(math.abs(capture.flick_x), math.abs(capture.flick_y))
+            >= capture.flick_threshold
+    then
+        return self:end_semantic_drag("flicked")
+    end
     return true
 end
 
@@ -435,13 +500,25 @@ function Context:update_semantic_drag(dt)
         self.pressed = nil
         return
     end
-    local dx = capture.input_x * capture.speed * math.max(0, dt or 0)
-    local dy = capture.input_y * capture.speed * math.max(0, dt or 0)
+    dt = math.max(0, dt or 0)
+    if dt == 0 then return end
+    local dx, dy
+    if capture.mode == "flick" then
+        local blend = 1 - math.exp(-capture.response * dt)
+        local target_x = capture.input_x * capture.max_distance
+        local target_y = capture.input_y * capture.max_distance
+        local next_x = capture.offset_x + (target_x - capture.offset_x) * blend
+        local next_y = capture.offset_y + (target_y - capture.offset_y) * blend
+        dx, dy = next_x - capture.offset_x, next_y - capture.offset_y
+        capture.offset_x, capture.offset_y = next_x, next_y
+    else
+        dx = capture.input_x * capture.speed * dt
+        dy = capture.input_y * capture.speed * dt
+    end
+    capture.velocity_x, capture.velocity_y = dx / dt, dy / dt
     if dx == 0 and dy == 0 then return end
     capture.x, capture.y = capture.x + dx, capture.y + dy
-    local values = drag_values(capture, capture.x, capture.y)
-    values.input_source = capture.source
-    values.semantic = true
+    local values = semantic_drag_values(capture, capture.x, capture.y)
     self:queue(item.node.dragged, item.node.id, values, entry.key)
     capture.last_x, capture.last_y = capture.x, capture.y
 end
@@ -453,11 +530,9 @@ function Context:end_semantic_drag(reason)
     local entry = self.layers:get(capture.key)
     local item = entry and entry.layout and entry.layout.by_id[capture.id]
     if item then
-        local values = drag_values(capture, capture.x, capture.y)
-        values.input_source = capture.source
-        values.semantic = true
+        local values = semantic_drag_values(capture, capture.x, capture.y)
         values.reason = reason
-        values.cancelled = reason ~= nil and reason ~= "released"
+        values.cancelled = reason ~= nil and reason ~= "released" and reason ~= "flicked"
         self:queue(item.node.drag_ended, item.node.id, values, entry.key)
     end
     local direction = Navigation.direction(capture.input_x, capture.input_y, 0.5)
@@ -804,7 +879,7 @@ function Context:activate_selection(source)
     if item.kind ~= "button" then return false end
     self.pressed = {key = entry.key, id = item.node.id}
     self.keyboard_pressed = {key = entry.key, id = item.node.id, semantic = true}
-    self:start_semantic_drag(entry, item, source)
+    self.keyboard_pressed.semantic_drag = self:start_semantic_drag(entry, item, source)
     self:queue(item.node.press_started, item.node.id, {input_source = source}, entry.key)
     if not self:start_hold(entry, item, source) then
         self:queue(item.node.action, item.node.id, {input_source = source}, entry.key)
@@ -841,6 +916,10 @@ function Context:input(event)
     local value = event.value or event
     local x, y = value.x or 0, value.y or 0
     if self.semantic_drag then return self:set_semantic_drag_input(event, source) end
+    if self.keyboard_pressed and self.keyboard_pressed.semantic_drag then
+        self.navigation_input = {x = x, y = y}
+        return true
+    end
     local options = self:navigation_options_for(self:navigation_owner())
     local direction = event.direction or Navigation.direction(x, y,
         event.threshold or options.threshold or 0.5)
@@ -1039,6 +1118,7 @@ function Context:event(name, ...)
             if self.semantic_drag then
                 return self:set_semantic_drag_input({direction = key, phase = "pressed"}, "keyboard")
             end
+            if self.keyboard_pressed and self.keyboard_pressed.semantic_drag then return true end
             return self:navigate(key, "keyboard")
         end
         if key == "space" or key == "return" or key == "kpenter" then

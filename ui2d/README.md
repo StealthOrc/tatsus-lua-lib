@@ -177,16 +177,23 @@ Captured buttons can also act as drag handles. Drag lifecycle actions include `x
 UI.button {
     id = "drawer-handle",
     label = "Drag drawer",
-    semantic_drag = {axis = "vertical", speed = 720},
+    semantic_drag = {
+        mode = "flick",
+        axis = "vertical",
+        max_distance = 92,
+        flick_threshold = 8,
+    },
     drag_started = "drawer_drag_start",
     dragged = "drawer_drag_move",
     drag_ended = "drawer_drag_end",
 }
 ```
 
-Pointer movement drives these actions after mouse capture. A selected drag handle also starts Semantic Drag Capture when accept is held: semantic navigation vectors drive the drag continuously and are consumed instead of changing Selection until accept is released. This behavior is enabled by default for drag handles; set `semantic_drag = false` to disable it, or configure its logical-units-per-second `speed`, analog `deadzone`, and optional `horizontal`/`vertical` `axis` constraint.
+Pointer movement drives these actions after mouse capture. A selected drag handle also starts Semantic Drag Capture when accept is held: semantic navigation vectors drive the drag and are consumed instead of changing Selection until accept is released. This behavior is enabled by default for drag handles; set `semantic_drag = false` to disable it. The default `continuous` mode accepts logical-units-per-second `speed`, analog `deadzone`, and an optional `horizontal`/`vertical` `axis` constraint.
 
-Use the continuous `dragged` values to directly control a transform while held, then retarget the same Motion Value from `drag_ended` to settle or snap the surface. A stationary press reports zero total distance, so callers can leave the surface unchanged rather than treating a click as a directional gesture.
+`mode = "flick"` turns the stick into a bounded, spring-like pull rather than unlimited travel. `max_distance` caps its preview distance, `response` tunes how quickly it follows the stick, and `flick_threshold` controls gesture recognition. Returning the stick to neutral after a recognized flick ends the drag even while accept remains held; navigation stays captured until accept is released, so the gesture cannot leak into Selection. Semantic drag actions include current pixel velocities as `velocity_x`/`velocity_y`, captured outward stick velocities as `flick_x`/`flick_y`, plus `flicked` and `mode`; a drawer can use the sign of a recognized flick to settle exactly one state in that direction.
+
+Use `dragged` values to directly control a transform while held, then retarget the same Motion Value from `drag_ended` to settle or snap the surface. A stationary press reports zero total distance, so callers can leave the surface unchanged rather than treating a click as a directional gesture.
 
 ## Fonts and SVG icons
 
