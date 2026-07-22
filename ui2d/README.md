@@ -198,12 +198,6 @@ SVG files are registered by semantic name in `UI.new {icons = {...}}` and used w
 
 Buttons activate on release over the same captured button and support Tab focus plus Space/Enter activation. Text fields support UTF-8 cursor positions, pointer selection, clipboard shortcuts, word deletion, Home/End, and declarative change/submit actions.
 
-Run the checks from the repository root:
-
-```powershell
-& "C:\Program Files\LOVE\lovec.exe" --console tests\ui2d
-```
-
 Run the example from the repository root:
 
 ```powershell
