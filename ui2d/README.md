@@ -168,13 +168,12 @@ ui:push(DrawerView, {
 })
 ```
 
-Captured buttons can also act as drag handles. Drag lifecycle actions include `x`, `y`, per-event `dx`/`dy`, and press-relative `total_dx`/`total_dy`. Moving at least three pixels suppresses the normal click action; a stationary click still activates it.
+Captured buttons can also act as drag handles. Drag lifecycle actions include `x`, `y`, per-event `dx`/`dy`, and press-relative `total_dx`/`total_dy`. Since ordinary button actions fire on press-down, a pure drag handle should omit `action` and decide how to settle from `drag_ended`; near-zero total deltas can be treated as a stationary handle click.
 
 ```lua
 UI.button {
     id = "drawer-handle",
     label = "Drag drawer",
-    action = "toggle_drawer",
     drag_started = "drawer_drag_start",
     dragged = "drawer_drag_move",
     drag_ended = "drawer_drag_end",
@@ -211,7 +210,7 @@ When no file is assigned to a family, LÖVE's default font is used. Configured f
 
 SVG files are registered by semantic name in `UI.new {icons = {...}}` and used with either `UI.icon` or a button's `icon` shorthand. The built-in lightweight renderer supports paths (`M/L/H/V/C/S/Q/T/Z`), lines, circles, fills, strokes, tinting, `viewBox`, and compound even-odd/non-zero fills. It intentionally does not implement the entire browser SVG standard; pre-flatten transforms and unsupported elements or arc commands in exported assets.
 
-Buttons activate on release over the same captured button and support Tab focus plus Space/Enter activation. Text fields support UTF-8 cursor positions, pointer selection, clipboard shortcuts, word deletion, Home/End, and declarative change/submit actions.
+Buttons activate immediately on mouse press-down. Focused buttons likewise activate on the Space/Enter keypress; release only clears their pressed visual state and pointer/keyboard capture. Text fields support UTF-8 cursor positions, pointer selection, clipboard shortcuts, word deletion, Home/End, and declarative change/submit actions.
 
 ## Shader surfaces
 

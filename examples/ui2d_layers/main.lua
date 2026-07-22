@@ -182,7 +182,6 @@ local Drawer = UI.view("drawer", function(model)
                     id = "drawer-grab-handle",
                     style = "drawer_handle",
                     label = "=  DRAG DRAWER  =",
-                    action = expanded and "close_perks" or "open_perks",
                     drag_started = "drawer_drag_start",
                     dragged = "drawer_drag_move",
                     drag_ended = "drawer_drag_end",
@@ -346,7 +345,7 @@ ui = UI.new {
             elseif action.total_dy > 3 then
                 drawer_progress = 0.67
             else
-                drawer_progress = drawer_progress < 0.335 and 0 or 0.67
+                drawer_progress = drawer_drag_origin < 0.335 and 0.67 or 0
             end
         elseif action.type == "show_tooltip" then
             ui:push(Tooltip, {

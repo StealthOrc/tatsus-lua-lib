@@ -46,10 +46,6 @@ local function drag_values(capture, x, y)
     }
 end
 
-local function moved_enough(values)
-    return values.total_dx * values.total_dx + values.total_dy * values.total_dy >= 9
-end
-
 function Context.new(config)
     config = config or {}
     local styles = config.styles
@@ -402,7 +398,6 @@ function Context:event(name, ...)
             local item = entry and entry.layout.by_id[capture.id]
             if item and capture.draggable then
                 local values = drag_values(capture, self.pointer_x, self.pointer_y)
-                capture.dragged = capture.dragged or moved_enough(values)
                 self:queue(item.node.dragged, item.node.id, values, entry.key)
             end
             capture.last_x, capture.last_y = self.pointer_x, self.pointer_y
@@ -432,7 +427,6 @@ function Context:event(name, ...)
                 last_y = self.pointer_y,
                 draggable = item.node.drag_started ~= nil or item.node.dragged ~= nil
                     or item.node.drag_ended ~= nil,
-                dragged = false,
             }
             if item.kind == "text_field" then
                 item.editor:move_to(self:cursor_from_x(item, self.pointer_x), false)
@@ -445,6 +439,9 @@ function Context:event(name, ...)
                 total_dx = 0,
                 total_dy = 0,
             }, route.entry.key)
+            if item.kind == "button" then
+                self:queue(item.node.action, item.node.id, nil, route.entry.key)
+            end
             self:update_hover()
             return true
         end
@@ -465,14 +462,8 @@ function Context:event(name, ...)
             local entry = self.layers:get(capture.key)
             local item = entry and entry.layout.by_id[capture.id]
             local values = drag_values(capture, self.pointer_x, self.pointer_y)
-            if capture.draggable then capture.dragged = capture.dragged or moved_enough(values) end
             if item and capture.draggable then
                 self:queue(item.node.drag_ended, item.node.id, values, entry.key)
-            end
-            if item and not capture.dragged and item.kind == "button" and item.enabled
-                and point_in_item(item, self.pointer_x, self.pointer_y)
-            then
-                self:queue(item.node.action, item.node.id, nil, entry.key)
             end
             self.pressed, self.pointer_capture = nil, nil
             self:update_hover()
@@ -490,6 +481,7 @@ function Context:event(name, ...)
             if item.kind == "button" and (key == "space" or key == "return" or key == "kpenter") then
                 self.pressed = {key = entry.key, id = item.node.id}
                 self.keyboard_pressed = {key = entry.key, id = item.node.id}
+                self:queue(item.node.action, item.node.id, nil, entry.key)
                 return true
             end
         end
@@ -497,11 +489,6 @@ function Context:event(name, ...)
     elseif name == "keyreleased" then
         local key = args[1]
         if self.keyboard_pressed and (key == "space" or key == "return" or key == "kpenter") then
-            local entry = self.layers:get(self.keyboard_pressed.key)
-            local item = entry and entry.layout.by_id[self.keyboard_pressed.id]
-            if item and item.enabled and same_handle(self.focused, entry.key, item.node.id) then
-                self:queue(item.node.action, item.node.id, nil, entry.key)
-            end
             self.keyboard_pressed, self.pressed = nil, nil
             return true
         end
