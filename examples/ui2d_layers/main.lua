@@ -6,10 +6,14 @@ local smoke = os.getenv("UI2D_SMOKE") == "1"
 local demo_perks = os.getenv("UI2D_DEMO_PERKS") == "1"
 local smoke_finished = false
 local ui
+local DRAWER_EXPANDED, DRAWER_LOWERED, DRAWER_CLOSED = 0, 0.67, 1
+local DRAWER_CLOSE_THRESHOLD = 0.84
 local drawer_open = false
-local drawer_progress = 0.67
+local drawer_progress = DRAWER_LOWERED
 local drawer_dragging = false
-local drawer_drag_origin = 0.67
+local drawer_drag_origin = DRAWER_LOWERED
+local drawer_close_pending = false
+local drawer_close_at = 0
 local tooltip_modes = {"top-right", "pointer", "button"}
 local tooltip_mode_index = 1
 local tooltip_animate_until = 0
@@ -158,7 +162,8 @@ local function card(spec)
 end
 
 local Drawer = UI.view("drawer", function(model)
-    local progress = math.max(0, math.min(0.67, model.progress or 0.67))
+    local progress = math.max(DRAWER_EXPANDED, math.min(DRAWER_CLOSED,
+        model.progress or DRAWER_LOWERED))
     local expanded = progress < 0.335
     local prismatic = fluid(17, false)
     local cursed = fluid(117, true)
@@ -352,8 +357,9 @@ end
 
 local function show_drawer()
     drawer_open = true
-    drawer_progress = 0.67
+    drawer_progress = DRAWER_LOWERED
     drawer_dragging = false
+    drawer_close_pending = false
     ui:push(Drawer, {
         key = "drawer",
         layer = "popover",
@@ -375,12 +381,14 @@ ui = UI.new {
             ui:remove("menu")
             drawer_open = false
             drawer_dragging = false
+            drawer_close_pending = false
         elseif action.type == "toggle_drawer" then
             if drawer_open then
                 ui:remove("tooltip")
                 ui:remove("drawer")
                 drawer_open = false
                 drawer_dragging = false
+                drawer_close_pending = false
             else
                 show_drawer()
             end
@@ -389,28 +397,39 @@ ui = UI.new {
             ui:remove("drawer")
             drawer_open = false
             drawer_dragging = false
+            drawer_close_pending = false
         elseif action.type == "open_perks" then
             ui:remove("tooltip")
             drawer_dragging = false
-            drawer_progress = 0
+            drawer_progress = DRAWER_EXPANDED
         elseif action.type == "close_perks" then
             drawer_dragging = false
-            drawer_progress = 0.67
+            drawer_progress = DRAWER_LOWERED
         elseif action.type == "drawer_drag_start" then
             ui:remove("tooltip")
             drawer_drag_origin = drawer_progress
             drawer_dragging = true
         elseif action.type == "drawer_drag_move" then
-            drawer_progress = math.max(0, math.min(0.67,
+            drawer_progress = math.max(DRAWER_EXPANDED, math.min(DRAWER_CLOSED,
                 drawer_drag_origin + action.total_dy / math.max(1, love.graphics.getHeight())))
         elseif action.type == "drawer_drag_end" then
             drawer_dragging = false
             if action.total_dy < -3 then
-                drawer_progress = 0
+                drawer_progress = DRAWER_EXPANDED
             elseif action.total_dy > 3 then
-                drawer_progress = 0.67
+                local close = drawer_drag_origin >= DRAWER_LOWERED - 0.01
+                    or drawer_progress >= DRAWER_CLOSE_THRESHOLD
+                if close then
+                    drawer_progress = DRAWER_CLOSED
+                    drawer_open = false
+                    drawer_close_pending = true
+                    drawer_close_at = love.timer.getTime() + 0.38
+                else
+                    drawer_progress = DRAWER_LOWERED
+                end
             else
-                drawer_progress = drawer_drag_origin < 0.335 and 0.67 or 0
+                drawer_progress = drawer_drag_origin < 0.335
+                    and DRAWER_LOWERED or DRAWER_EXPANDED
             end
         elseif action.type == "cycle_tooltip_anchor" then
             tooltip_mode_index = tooltip_mode_index % #tooltip_modes + 1
@@ -434,7 +453,7 @@ function love.load()
     ui:show(Hud, {key = "hud", layer = "base", pointer = "pass", keyboard = "pass"})
     if smoke or demo_perks then
         drawer_open = true
-        drawer_progress = 0
+        drawer_progress = DRAWER_EXPANDED
         ui:push(Menu, {key = "menu", layer = "overlay"})
         ui:push(Drawer, {
             key = "drawer",
@@ -455,7 +474,13 @@ function love.load()
     ui:update(0)
 end
 
-function love.update(dt) ui:update(dt) end
+function love.update(dt)
+    ui:update(dt)
+    if drawer_close_pending and love.timer.getTime() >= drawer_close_at then
+        drawer_close_pending = false
+        ui:discard("drawer")
+    end
+end
 
 function love.draw()
     ui:draw()
