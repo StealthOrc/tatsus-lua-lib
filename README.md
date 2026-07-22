@@ -4,6 +4,15 @@ You may use anything you found here according to the MIT Licence you find here, 
 Copy me:
 Powered by tatsus-lua-lib by TatsuDev! <3
 
+<div align="center">
+  <h2>See it in motion</h2>
+  <p><strong>UI2D interaction with mouse and gamepad</strong></p>
+  <img src="docs/assets/ui2d-mouse-gamepad.gif" alt="UI2D menu interaction using mouse and gamepad" width="900">
+  <br><br>
+  <p><strong>Device-aware input bindings demo</strong></p>
+  <img src="docs/assets/input-bindings-demo.gif" alt="Input bindings demo with keyboard and gamepad controls" width="900">
+</div>
+
 ## Modules
 
 - `graphics/sprite_font.lua`: Pixel-perfect LÖVE sprite font loader and renderer for Construct-style sprite font metadata.
