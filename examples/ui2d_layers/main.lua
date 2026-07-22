@@ -17,6 +17,7 @@ local drawer_close_at = 0
 local tooltip_modes = {"top-right", "pointer", "button"}
 local tooltip_mode_index = 1
 local tooltip_animate_until = 0
+local gamepad_axes = {}
 
 local styles = UI.StyleSheet {
     viewport = {reference_width = 960, reference_height = 640, min_scale = 0.75, max_scale = 2},
@@ -53,7 +54,9 @@ local styles = UI.StyleSheet {
             text = "body",
             transform = {translate_y = 0, scale = 1},
             states = {
-                hovered = {transform = {translate_y = -5, scale = 1.03}},
+                highlighted = {transform = {translate_y = -5, scale = 1.03}},
+                hovered = "highlighted",
+                selected = "highlighted",
                 pressed = {transform = {translate_y = 0, scale = 0.97}},
             },
             transition = {
@@ -499,3 +502,38 @@ function love.keypressed(...) ui:event("keypressed", ...) end
 function love.keyreleased(...) ui:event("keyreleased", ...) end
 function love.textinput(...) ui:event("textinput", ...) end
 function love.resize(...) ui:event("resize", ...) end
+
+local function gamepad_source(joystick)
+    return {kind = "gamepad", id = joystick:getID()}
+end
+
+function love.gamepadpressed(joystick, button)
+    if button == "a" then
+        ui:input {action = "accept", phase = "pressed", source = gamepad_source(joystick)}
+    else
+        local direction = ({dpup = "up", dpdown = "down", dpleft = "left", dpright = "right"})[button]
+        if direction then
+            ui:input {action = "navigate", direction = direction, phase = "pressed",
+                source = gamepad_source(joystick)}
+        end
+    end
+end
+
+function love.gamepadreleased(joystick, button)
+    if button == "a" then
+        ui:input {action = "accept", phase = "released", source = gamepad_source(joystick)}
+    end
+end
+
+function love.gamepadaxis(joystick, axis, value)
+    if axis ~= "leftx" and axis ~= "lefty" then return end
+    local id = joystick:getID()
+    gamepad_axes[id] = gamepad_axes[id] or {x = 0, y = 0}
+    gamepad_axes[id][axis == "leftx" and "x" or "y"] = value
+    ui:input {action = "navigate", value = gamepad_axes[id], phase = "changed",
+        source = gamepad_source(joystick)}
+end
+
+function love.joystickremoved(joystick)
+    gamepad_axes[joystick:getID()] = nil
+end

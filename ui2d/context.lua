@@ -8,6 +8,7 @@ local LayerStack = require("ui2d.layer_stack")
 local Transform = require("ui2d.transform")
 local Motion = require("ui2d.motion")
 local Shader = require("ui2d.shader")
+local Navigation = require("ui2d.navigation")
 
 local Context = {}
 Context.__index = Context
@@ -18,6 +19,11 @@ end
 
 local function same_handle(handle, key, id)
     return handle and handle.key == key and handle.id == id
+end
+
+local function input_source_kind(source)
+    if type(source) == "table" then return source.kind or "navigation" end
+    return source or "navigation"
 end
 
 local function action_value(action, source_id, extra, view_key)
@@ -59,6 +65,8 @@ function Context.new(config)
         fonts = FontCache.new(styles),
         renderer = Renderer.new(styles, icons, shaders),
         dispatch = config.dispatch,
+        navigation_options = type(config.navigation) == "table" and config.navigation or {},
+        navigation_enabled = config.navigation ~= false,
         layers = LayerStack.new(config.layers),
         motion = Motion.new(),
         editors = {},
@@ -66,6 +74,9 @@ function Context.new(config)
         time = 0,
         pointer_x = 0,
         pointer_y = 0,
+        selections = {},
+        selection_mode = "navigation",
+        navigation_input = {x = 0, y = 0},
     }, Context)
 end
 
@@ -75,6 +86,9 @@ function Context:show(view, options)
     self.motion = Motion.new()
     self.editors = {}
     self.hovered, self.pressed, self.focused = nil, nil, nil
+    self.selections = {}
+    self.selection_mode = "navigation"
+    self.navigation_input = {x = 0, y = 0}
     self.pointer_capture, self.keyboard_pressed = nil, nil
     self.cancelled_pointer_button = cancelled_pointer_button
     options = StyleSheet.copy(options or {})
@@ -109,6 +123,7 @@ function Context:discard(key)
     local entry = self.layers:remove(key)
     if not entry then return false end
     self.editors[key] = nil
+    self.selections[key] = nil
     self.motion:remove_layer(key)
     if self.hovered and self.hovered.key == key then self.hovered = nil end
     if self.pressed and self.pressed.key == key then self.pressed = nil end
@@ -175,14 +190,31 @@ function Context:rebuild()
             icons = self.icons,
             editor_for = function(node) return self:editor_for(entry, node) end,
         })
-        self.motion:reconcile(entry, entry.layout, self)
-        self.motion:apply(entry)
     end
     if self.focused then
         local entry = self.layers:get(self.focused.key)
         if not entry or not entry.layout.by_id[self.focused.id] then self.focused = nil end
     end
+    for key, selection in pairs(self.selections) do
+        local entry = self.layers:get(key)
+        local item = entry and entry.layout and entry.layout.by_id[selection.id]
+        if not item or not item.enabled or not item.navigation_enabled then
+            local first = entry and entry.layout and Navigation.first(entry.layout,
+                entry.navigation_options and entry.navigation_options.initial)
+            self.selections[key] = first and {key = key, id = first.node.id} or nil
+        end
+    end
+    for _, entry in ipairs(self.layers.entries) do
+        if entry.navigation ~= "pass" and not self.selections[entry.key] and entry.layout then
+            local first = Navigation.first(entry.layout, entry.navigation_options.initial)
+            if first then self.selections[entry.key] = {key = entry.key, id = first.node.id} end
+        end
+    end
     self:update_hover()
+    for _, entry in ipairs(self.layers.entries) do
+        self.motion:reconcile(entry, entry.layout, self)
+        self.motion:apply(entry)
+    end
 end
 
 function Context:queue(action, source_id, extra, view_key)
@@ -198,6 +230,15 @@ end
 
 function Context:update(dt)
     self.time = self.time + (dt or 0)
+    local navigation_input = self.navigation_input
+    if navigation_input.direction and navigation_input.repeat_at
+        and self.time >= navigation_input.repeat_at
+    then
+        self:navigate(navigation_input.direction, navigation_input.source)
+        local repeat_options = self:navigation_options_for(self:navigation_owner())
+        navigation_input.repeat_at = self.time
+            + (repeat_options.repeat_interval or 0.10)
+    end
     if self.dispatch then
         for _, action in ipairs(self:take_actions()) do self.dispatch(action) end
     end
@@ -278,6 +319,14 @@ function Context:is_pressed(entry, id)
     return same_handle(self.pressed, entry.key, id)
 end
 
+function Context:is_selected(entry, id)
+    if self.selection_mode == "pointer" then
+        return same_handle(self.hovered, entry.key, id)
+    end
+    local owner = self:navigation_owner()
+    return owner == entry and same_handle(self:navigation_selection(entry), entry.key, id)
+end
+
 function Context:is_focused(entry, id)
     return same_handle(self.focused, entry.key, id)
 end
@@ -322,23 +371,172 @@ function Context:keyboard_owner()
     return nil
 end
 
+function Context:navigation_owner()
+    if not self.navigation_enabled then return nil end
+    for index = #self.layers.entries, 1, -1 do
+        local entry = self.layers.entries[index]
+        if entry.navigation ~= "pass" then return entry end
+    end
+    return nil
+end
+
+function Context:navigation_options_for(entry)
+    local result = StyleSheet.copy(self.navigation_options)
+    StyleSheet.merge(result, entry and entry.navigation_options or {})
+    local root = entry and entry.layout and entry.layout.root.node.navigation
+    if type(root) == "table" then StyleSheet.merge(result, root) end
+    return result
+end
+
+function Context:navigation_selection(entry)
+    return entry and self.selections[entry.key] or nil
+end
+
+function Context:set_navigation_selection(entry, item, source)
+    if not entry then return false end
+    local previous = self.selections[entry.key]
+    if previous and item and previous.id == item.node.id then
+        previous.source = source or previous.source
+        self.selection_mode = input_source_kind(source or self.selection_mode)
+        return true
+    end
+    if previous then
+        local previous_item = entry.layout and entry.layout.by_id[previous.id]
+        if previous_item then
+            self:queue(previous_item.node.select_leave, previous.id,
+                {selection_source = source}, entry.key)
+        end
+    end
+    self.selections[entry.key] = item and {key = entry.key, id = item.node.id, source = source} or nil
+    if self.focused and (not item or not same_handle(self.focused, entry.key, item.node.id)) then
+        self.focused = nil
+    end
+    self.selection_mode = input_source_kind(source)
+    if item then
+        self:queue(item.node.select_enter, item.node.id,
+            {selection_source = source}, entry.key)
+    end
+    return item ~= nil
+end
+
+function Context:select(id, view_key, source)
+    local entry = view_key and self.layers:get(view_key) or self:navigation_owner()
+    local item = entry and entry.layout and entry.layout.by_id[id]
+    if not item or not item.navigation_enabled or not item.enabled then return false end
+    return self:set_navigation_selection(entry, item, source or "programmatic")
+end
+
+function Context:selected()
+    local handle
+    if self.selection_mode == "pointer" then
+        handle = self.hovered
+    else
+        local entry = self:navigation_owner()
+        handle = self:navigation_selection(entry)
+    end
+    if not handle then return nil end
+    return {id = handle.id, view = handle.key,
+        source = self.selection_mode == "pointer" and "pointer" or handle.source or self.selection_mode}
+end
+
+function Context:navigate(direction, source)
+    local entry = self:navigation_owner()
+    local layout = entry and entry.layout
+    if not layout or #(layout.navigable or {}) == 0 then return false end
+    local selection = self:navigation_selection(entry)
+    local options = self:navigation_options_for(entry)
+    local request = {
+        context = self,
+        view = entry.key,
+        source = source,
+        selected = selection and selection.id or nil,
+    }
+    local target = Navigation.move(layout, selection and selection.id, direction, options, request)
+    return target and self:set_navigation_selection(entry, target, source or "navigation") or false
+end
+
 function Context:focus_adjacent(direction)
-    local entry = self:keyboard_owner()
+    local entry = self:navigation_owner()
     local layout = entry and entry.layout
     if not layout or #layout.interactive == 0 then return false end
     local current = 0
     for index, item in ipairs(layout.interactive) do
-        if same_handle(self.focused, entry.key, item.node.id) then current = index break end
+        if same_handle(self:navigation_selection(entry), entry.key, item.node.id) then current = index break end
     end
     for step = 1, #layout.interactive do
         local index = ((current - 1 + direction * step) % #layout.interactive) + 1
         local item = layout.interactive[index]
-        if item.enabled then
-            self.focused = {key = entry.key, id = item.node.id}
-            return true
+        if item.enabled and item.navigation_enabled then
+            return self:set_navigation_selection(entry, item, "keyboard")
         end
     end
     return false
+end
+
+function Context:activate_selection(source)
+    local entry = self:navigation_owner()
+    local selection = self:navigation_selection(entry)
+    local item = selection and entry and entry.layout and entry.layout.by_id[selection.id]
+    if not item or not item.enabled then return false end
+    self.selection_mode = input_source_kind(source)
+    if item.kind == "text_field" then
+        self.focused = {key = entry.key, id = item.node.id}
+        return true
+    end
+    if item.kind ~= "button" then return false end
+    self.pressed = {key = entry.key, id = item.node.id}
+    self.keyboard_pressed = {key = entry.key, id = item.node.id, semantic = true}
+    self:queue(item.node.press_started, item.node.id, {input_source = source}, entry.key)
+    self:queue(item.node.action, item.node.id, {input_source = source}, entry.key)
+    return true
+end
+
+function Context:release_selection(source)
+    local pressed = self.keyboard_pressed
+    if not pressed or not pressed.semantic then return false end
+    local entry = self.layers:get(pressed.key)
+    local item = entry and entry.layout and entry.layout.by_id[pressed.id]
+    if item then self:queue(item.node.press_ended, item.node.id, {input_source = source}, entry.key) end
+    self.keyboard_pressed, self.pressed = nil, nil
+    return true
+end
+
+function Context:input(event)
+    assert(type(event) == "table", "ui2d input expects an event table")
+    local action = event.action or event.name or event.type
+    local source = event.source or "navigation"
+    if action == "accept" then
+        if event.phase == "released" then return self:release_selection(source) end
+        if event.phase == nil or event.phase == "pressed" then return self:activate_selection(source) end
+        return false
+    elseif action ~= "navigate" then
+        return false
+    end
+
+    local value = event.value or event
+    local x, y = value.x or 0, value.y or 0
+    local options = self:navigation_options_for(self:navigation_owner())
+    local direction = event.direction or Navigation.direction(x, y,
+        event.threshold or options.threshold or 0.5)
+    if event.phase == "pressed" and event.direction then
+        return self:navigate(event.direction, source)
+    end
+    if event.phase == "released" or not direction then
+        self.navigation_input = {x = x, y = y}
+        return false
+    end
+    local held = self.navigation_input
+    local changed = held.direction ~= direction
+    self.navigation_input = {
+        x = x,
+        y = y,
+        direction = direction,
+        source = source,
+        repeat_at = changed and (self.time + (options.repeat_delay or 0.35))
+            or held.repeat_at,
+    }
+    if changed then return self:navigate(direction, source) end
+    return true
 end
 
 function Context:field_keypressed(entry, item, key)
@@ -392,6 +590,7 @@ function Context:event(name, ...)
         return false
     elseif name == "mousemoved" then
         self.pointer_x, self.pointer_y = args[1], args[2]
+        self.selection_mode = "pointer"
         local capture = self.pointer_capture
         if capture then
             local entry = self.layers:get(capture.key)
@@ -411,12 +610,14 @@ function Context:event(name, ...)
         return self.pointer_capture ~= nil or self:route_at(self.pointer_x, self.pointer_y).consumed
     elseif name == "mousepressed" then
         self.pointer_x, self.pointer_y = args[1], args[2]
+        self.selection_mode = "pointer"
         if self.cancelled_pointer_button == args[3] then self.cancelled_pointer_button = nil end
         local route = self:route_at(self.pointer_x, self.pointer_y)
         local item = route.item
         if args[3] == 1 and item and item.enabled then
             local handle = {key = route.entry.key, id = item.node.id}
-            self.focused, self.pressed = handle, {key = handle.key, id = handle.id}
+            self.focused = item.kind == "text_field" and handle or nil
+            self.pressed = {key = handle.key, id = handle.id}
             self.pointer_capture = {
                 key = handle.key,
                 id = handle.id,
@@ -439,8 +640,11 @@ function Context:event(name, ...)
                 total_dx = 0,
                 total_dy = 0,
             }, route.entry.key)
+            self:queue(item.node.press_started, item.node.id,
+                {input_source = "pointer"}, route.entry.key)
             if item.kind == "button" then
-                self:queue(item.node.action, item.node.id, nil, route.entry.key)
+                self:queue(item.node.action, item.node.id,
+                    {input_source = "pointer"}, route.entry.key)
             end
             self:update_hover()
             return true
@@ -465,6 +669,10 @@ function Context:event(name, ...)
             if item and capture.draggable then
                 self:queue(item.node.drag_ended, item.node.id, values, entry.key)
             end
+            if item then
+                self:queue(item.node.press_ended, item.node.id,
+                    {input_source = "pointer"}, entry.key)
+            end
             self.pressed, self.pointer_capture = nil, nil
             self:update_hover()
             return true
@@ -472,23 +680,31 @@ function Context:event(name, ...)
         return self:route_at(self.pointer_x, self.pointer_y).consumed
     elseif name == "keypressed" then
         local key = args[1]
-        if key == "tab" then return self:focus_adjacent(self:modifiers().shift and -1 or 1) end
         local owner = self:keyboard_owner()
         local entry = self.focused and self.layers:get(self.focused.key)
         local item = entry and owner == entry and entry.layout.by_id[self.focused.id]
-        if item and item.enabled then
-            if item.kind == "text_field" then return self:field_keypressed(entry, item, key) end
-            if item.kind == "button" and (key == "space" or key == "return" or key == "kpenter") then
-                self.pressed = {key = entry.key, id = item.node.id}
-                self.keyboard_pressed = {key = entry.key, id = item.node.id}
-                self:queue(item.node.action, item.node.id, nil, entry.key)
-                return true
-            end
+        if item and item.enabled and item.kind == "text_field"
+            and self:field_keypressed(entry, item, key)
+        then
+            return true
+        end
+        if key == "tab" then return self:focus_adjacent(self:modifiers().shift and -1 or 1) end
+        if key == "up" or key == "down" or key == "left" or key == "right" then
+            return self:navigate(key, "keyboard")
+        end
+        if key == "space" or key == "return" or key == "kpenter" then
+            return self:activate_selection("keyboard")
         end
         return owner ~= nil
     elseif name == "keyreleased" then
         local key = args[1]
         if self.keyboard_pressed and (key == "space" or key == "return" or key == "kpenter") then
+            if self.keyboard_pressed.semantic then return self:release_selection("keyboard") end
+            local pressed = self.keyboard_pressed
+            local entry = self.layers:get(pressed.key)
+            local item = entry and entry.layout and entry.layout.by_id[pressed.id]
+            if item then self:queue(item.node.press_ended, item.node.id,
+                {input_source = "keyboard"}, entry.key) end
             self.keyboard_pressed, self.pressed = nil, nil
             return true
         end

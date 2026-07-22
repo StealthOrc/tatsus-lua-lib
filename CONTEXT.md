@@ -32,6 +32,30 @@ _Avoid_: Click-through, bubbling
 The back-to-front ordering of overlapping nodes within one View Layer.
 _Avoid_: Sublayer, global layer
 
+**Selection**:
+The one navigable UI element currently targeted for semantic activation. Pointer hover presents the same selected state while pointer input is active, without erasing retained controller selection.
+_Avoid_: Focus, when referring to controller navigation
+
+**Navigation Group**:
+A container relationship used to choose the next Selection. Rows and columns infer horizontal and vertical groups; compatible sibling groups can preserve child ordinal.
+_Avoid_: Tab order, focus chain
+
+**Semantic Input**:
+A device-independent intention such as navigate or accept that UI2D can consume without knowing which physical control produced it.
+_Avoid_: Key event, controller event
+
+**Input Action**:
+A named gameplay or UI intention with a declared value shape: button, one-dimensional axis, or two-dimensional axis.
+_Avoid_: Hotkey
+
+**Binding Set**:
+The bindings for one device family, such as keyboard or gamepad. Changing one Binding Set does not overwrite another.
+_Avoid_: Control scheme, when referring specifically to stored bindings
+
+**Binding**:
+A recipe that maps one or more physical or standardized controls to an Input Action. Chords, axis directions, full axes, sticks, and digital composites are all Binding shapes.
+_Avoid_: Key, when the source may not be a keyboard key
+
 ## Animation and layout
 
 **Motion Value**:

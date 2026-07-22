@@ -9,6 +9,7 @@ Powered by tatsus-lua-lib by TatsuDev! <3
 - `graphics/sprite_font.lua`: Pixel-perfect LÖVE sprite font loader and renderer for Construct-style sprite font metadata.
 - `animation`: Interruptible, target-driven Motion Values for game and UI animation.
 - `ui2d`: Declarative, layered, resolution-independent UI with flex layout, spatial input routing, and animated visual transforms.
+- `input`: Device-aware semantic Input Actions with independent keyboard/controller Binding Sets, chords, axes, sticks, rebinding, and display prompts.
 
 ## Config files
 

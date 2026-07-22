@@ -1,6 +1,7 @@
 local Units = require("ui2d.units")
 local Nodes = require("ui2d.nodes")
 local Transform = require("ui2d.transform")
+local Navigation = require("ui2d.navigation")
 
 local Layout = {}
 
@@ -364,6 +365,7 @@ function Layout.build(root, width, height, env)
         env = env,
     }
     arrange(measured, 0, 0, width, height, result)
+    Navigation.build(result)
     Layout.refresh_visuals(result)
     return result
 end

@@ -213,7 +213,49 @@ When no file is assigned to a family, LÖVE's default font is used. Configured f
 
 SVG files are registered by semantic name in `UI.new {icons = {...}}` and used with either `UI.icon` or a button's `icon` shorthand. The built-in lightweight renderer supports paths (`M/L/H/V/C/S/Q/T/Z`), lines, circles, fills, strokes, tinting, `viewBox`, and compound even-odd/non-zero fills. It intentionally does not implement the entire browser SVG standard; pre-flatten transforms and unsupported elements or arc commands in exported assets.
 
-Buttons activate immediately on mouse press-down. Focused buttons likewise activate on the Space/Enter keypress; release only clears their pressed visual state and pointer/keyboard capture. Text fields support UTF-8 cursor positions, pointer selection, clipboard shortcuts, word deletion, Home/End, and declarative change/submit actions.
+Buttons activate immediately on mouse press-down. Selected buttons likewise activate on the Space/Enter keypress; release only clears their pressed visual state and pointer/keyboard capture. Text fields support UTF-8 cursor positions, pointer selection, clipboard shortcuts, word deletion, Home/End, and declarative change/submit actions.
+
+## Selection and controller navigation
+
+UI2D keeps mouse-only `hovered`, activation `pressed`, controller/keyboard `selected`, and text-editing `focused` states distinct. A pointer-hovered item also presents as selected while pointer input is active; actual controller or keyboard navigation switches selection back without a stationary cursor stealing it during declarative rebuilds. `hover_enter`, `hover_leave`, `press_started`, `press_ended`, `select_enter`, and `select_leave` actions allow behavior to follow the same lifecycle as the visual states.
+
+When `selected` has no explicit visual state, it falls back to `hovered`. Named state aliases make deliberate sharing explicit while preserving independent overrides:
+
+```lua
+states = {
+    highlighted = {background = "accent", transform = {scale = 1.04}},
+    hovered = "highlighted",
+    selected = "highlighted",
+    pressed = {transform = {scale = 0.97}},
+}
+```
+
+UI2D accepts semantic input rather than choosing physical controller buttons:
+
+```lua
+ui:input {action = "navigate", value = {x = 0, y = 1}, phase = "changed",
+    source = {kind = "gamepad", id = joystick:getID()}}
+ui:input {action = "accept", phase = "pressed", source = {kind = "gamepad"}}
+ui:input {action = "accept", phase = "released", source = {kind = "gamepad"}}
+```
+
+Rows and columns infer horizontal and vertical Navigation Groups. Movement within a list follows its children; movement between compatible sibling lists preserves the selected ordinal. Disabled controls and nodes with `navigation = false` are skipped. Analog navigation applies a dead zone, dominant-axis selection, initial repeat delay, and repeat interval.
+
+Automatic behavior can be adjusted at the context, View Layer, root, container, or node:
+
+```lua
+local ui = UI.new {
+    navigation = {wrap = false, repeat_delay = 0.35, repeat_interval = 0.10},
+}
+
+UI.column {
+    navigation = {entry = "resume", wrap = false},
+    UI.button {id = "resume", navigate = {right = "settings"}},
+    UI.button {id = "decorative", navigation = false},
+}
+```
+
+A `resolve(request)` function may return a target ID, `false` to stop movement, or `nil` to retain automatic behavior. Set `mode = "manual"` for full control. `ui:select(id, view_key)` selects programmatically and `ui:selected()` returns the active `{id, view, source}`. View Layers block navigation by default; `navigation = "pass"` lets lower layers retain ownership, and `keyboard = "pass"` implies the same policy unless navigation is configured explicitly.
 
 ## Shader surfaces
 
@@ -262,3 +304,5 @@ The layered, animated example exercises full-screen blocking, a partial pass-thr
 ```
 
 Set `UI2D_DEMO_PERKS=1` before launching to open the example directly with the single drawer fully raised.
+
+The example also forwards a small handwritten controller adapter directly into `ui:input`: D-pad or left stick navigates, and the standardized lower face button accepts. It intentionally does not require the independent `input` bindings module.

@@ -83,7 +83,7 @@ local function visual_targets(entry, item, layout, context)
     local states = StyleSheet.copy(style.states or {})
     StyleSheet.merge(states, item.node.states or {})
     local function apply(name)
-        local state = states[name]
+        local state = StyleSheet.interaction_state(states, name)
         if not state then return end
         if state.transform then StyleSheet.merge(transform, state.transform) end
         if state.opacity ~= nil then opacity = state.opacity end
@@ -92,6 +92,7 @@ local function visual_targets(entry, item, layout, context)
         apply("disabled")
     else
         if context:is_focused(entry, item.node.id) then apply("focused") end
+        if context:is_selected(entry, item.node.id) then apply("selected") end
         if context:is_hovered(entry, item.node.id) then apply("hovered") end
         if context:is_pressed(entry, item.node.id) then apply("pressed") end
     end

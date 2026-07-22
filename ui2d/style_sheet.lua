@@ -171,6 +171,17 @@ function StyleSheet:with(overrides)
     return StyleSheet.new(merge(copy(self.values), overrides or {}))
 end
 
+function StyleSheet.interaction_state(states, name, seen)
+    states = states or {}
+    local state = states[name]
+    if state == nil and name == "selected" then state = states.hovered end
+    if type(state) ~= "string" then return state end
+    seen = seen or {}
+    if seen[state] then error("cyclic UI interaction state alias: " .. state) end
+    seen[state] = true
+    return StyleSheet.interaction_state(states, state, seen)
+end
+
 StyleSheet.copy = copy
 StyleSheet.merge = merge
 

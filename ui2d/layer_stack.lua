@@ -35,6 +35,12 @@ function LayerStack:push(view, options)
     assert(type(key) == "string" and key ~= "", "View Layer requires a non-empty key")
     assert(not self.by_key[key], "duplicate View Layer key: " .. key)
     self.sequence = self.sequence + 1
+    local navigation = options.navigation
+    local navigation_policy = navigation == "pass" and "pass"
+        or (navigation == false and "pass" or nil)
+    if navigation_policy == nil then
+        navigation_policy = options.keyboard == "pass" and "pass" or "block"
+    end
     local entry = {
         key = key,
         view = view,
@@ -42,6 +48,8 @@ function LayerStack:push(view, options)
         layer = self:resolve_layer(options.layer),
         pointer = options.pointer or "block",
         keyboard = options.keyboard or "block",
+        navigation = navigation_policy,
+        navigation_options = type(navigation) == "table" and navigation or {},
         transition = options.transition,
         order = self.sequence,
         layout = nil,

@@ -1,4 +1,5 @@
 local Layout = require("ui2d.layout")
+local StyleSheet = require("ui2d.style_sheet")
 
 local Renderer = {}
 Renderer.__index = Renderer
@@ -42,6 +43,12 @@ local function declared_surface(item, surface)
     if primary_surface(item) == surface and item.node.shader ~= nil then return item.node.shader end
     if primary_surface(item) == surface and item.style and item.style.shader ~= nil then return item.style.shader end
     return nil
+end
+
+local function interaction_style(item, name)
+    local states = StyleSheet.copy(item.style and item.style.states or {})
+    StyleSheet.merge(states, item.node.states or {})
+    return StyleSheet.interaction_state(states, name) or {}
 end
 
 function Renderer.new(styles, icons, shaders)
@@ -102,12 +109,21 @@ end
 function Renderer:button_background(item, state, scale, alpha, surfaces, environment)
     local style = item.style
     local base = color(self.styles, style.background)
+    local interaction = {}
     if not item.enabled then
-        base = color(self.styles, style.background_disabled, {base[1], base[2], base[3], base[4] * 0.45})
+        interaction = interaction_style(item, "disabled")
+        base = color(self.styles, interaction.background or style.background_disabled,
+            {base[1], base[2], base[3], base[4] * 0.45})
     elseif state.pressed then
-        base = color(self.styles, style.background_pressed, shifted(base, -0.08))
+        interaction = interaction_style(item, "pressed")
+        base = color(self.styles, interaction.background or style.background_pressed, shifted(base, -0.08))
     elseif state.hovered then
-        base = color(self.styles, style.background_hovered, shifted(base, 0.07))
+        interaction = interaction_style(item, "hovered")
+        base = color(self.styles, interaction.background or style.background_hovered, shifted(base, 0.07))
+    elseif state.selected then
+        interaction = interaction_style(item, "selected")
+        base = color(self.styles, interaction.background or style.background_selected
+            or style.background_hovered, shifted(base, 0.07))
     end
     local radius = self:radius(item, scale)
     self:with_surface(surfaces.background, "background", item, environment.context,
@@ -116,10 +132,11 @@ function Renderer:button_background(item, state, scale, alpha, surfaces, environ
             love.graphics.rectangle("fill", item.rect.x, item.rect.y, item.rect.w, item.rect.h, radius, radius)
         end)
 
-    self:draw_border(item, style.border, radius, scale, alpha, surfaces.border, environment)
+    self:draw_border(item, interaction.border or style.border,
+        radius, scale, alpha, surfaces.border, environment)
 
-    if state.focused then
-        local focus = color(self.styles, style.focus or style.foreground)
+    if state.focused or state.selected then
+        local focus = color(self.styles, interaction.focus or style.focus or style.foreground)
         local inset = math.max(2, 3 * scale)
         self:with_surface(surfaces.border, "border", item, environment.context,
             environment.layout, environment.entry, alpha, function()
@@ -135,7 +152,16 @@ end
 function Renderer:text_field(item, state, scale, time, alpha, surfaces, environment)
     local style = item.style
     local base = color(self.styles, style.background)
-    if state.focused then base = color(self.styles, style.background_focused, shifted(base, 0.04)) end
+    local interaction = {}
+    if state.focused then
+        interaction = interaction_style(item, "focused")
+        base = color(self.styles, interaction.background or style.background_focused, shifted(base, 0.04))
+    end
+    if state.selected and not state.focused then
+        interaction = interaction_style(item, "selected")
+        base = color(self.styles, interaction.background or style.background_selected
+            or style.background_focused, shifted(base, 0.04))
+    end
     if not item.enabled then base[4] = base[4] * 0.5 end
     local radius = self:radius(item, scale)
     self:with_surface(surfaces.background, "background", item, environment.context,
@@ -144,7 +170,8 @@ function Renderer:text_field(item, state, scale, time, alpha, surfaces, environm
             love.graphics.rectangle("fill", item.rect.x, item.rect.y, item.rect.w, item.rect.h, radius, radius)
         end)
 
-    local border_value = state.focused and (style.border_focused or style.caret) or style.border
+    local border_value = interaction.border or ((state.focused or state.selected)
+        and (style.border_selected or style.border_focused or style.caret) or style.border)
     self:draw_border(item, border_value, radius, scale, alpha, surfaces.border, environment)
 
     local padding_x = Layout.resolve_length(style.padding_x or 0, item.rect.w,
@@ -213,6 +240,7 @@ local function draw_item(self, item, context, layout, entry, inherited_alpha, in
     }
     local state = {
         hovered = context:is_hovered(entry, item.node.id),
+        selected = context:is_selected(entry, item.node.id),
         pressed = context:is_pressed(entry, item.node.id),
         focused = context:is_focused(entry, item.node.id),
     }
