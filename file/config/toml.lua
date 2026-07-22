@@ -4,6 +4,120 @@ local function trim(s)
     return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
+local ESCAPE_MAP = {
+    ['"'] = '"',
+    ["\\"] = "\\",
+    ["n"] = "\n",
+    ["r"] = "\r",
+    ["t"] = "\t",
+}
+
+local function stripComment(line)
+    local inString = false
+    local escaped = false
+
+    for index = 1, #line do
+        local character = line:sub(index, index)
+        if inString then
+            if escaped then
+                escaped = false
+            elseif character == "\\" then
+                escaped = true
+            elseif character == '"' then
+                inString = false
+            end
+        else
+            if character == '"' then
+                inString = true
+            elseif character == "#" then
+                return line:sub(1, index - 1)
+            end
+        end
+    end
+
+    return line
+end
+
+local function decodeString(raw)
+    if raw:sub(1, 1) ~= '"' or raw:sub(-1) ~= '"' then
+        return nil, "Expected a quoted TOML string"
+    end
+
+    local out = {}
+    local escaped = false
+
+    for index = 2, #raw - 1 do
+        local character = raw:sub(index, index)
+        if escaped then
+            local decoded = ESCAPE_MAP[character]
+            if not decoded then
+                return nil, "Unsupported TOML escape \\" .. character
+            end
+            out[#out + 1] = decoded
+            escaped = false
+        elseif character == "\\" then
+            escaped = true
+        else
+            out[#out + 1] = character
+        end
+    end
+
+    if escaped then
+        return nil, "Unterminated TOML escape sequence"
+    end
+
+    return table.concat(out)
+end
+
+local function splitArrayValues(body)
+    local values = {}
+    local buffer = {}
+    local inString = false
+    local escaped = false
+    local depth = 0
+
+    for index = 1, #body do
+        local character = body:sub(index, index)
+        if inString then
+            buffer[#buffer + 1] = character
+            if escaped then
+                escaped = false
+            elseif character == "\\" then
+                escaped = true
+            elseif character == '"' then
+                inString = false
+            end
+        else
+            if character == '"' then
+                inString = true
+                buffer[#buffer + 1] = character
+            elseif character == "[" then
+                depth = depth + 1
+                buffer[#buffer + 1] = character
+            elseif character == "]" then
+                depth = math.max(0, depth - 1)
+                buffer[#buffer + 1] = character
+            elseif character == "," and depth == 0 then
+                values[#values + 1] = trim(table.concat(buffer))
+                buffer = {}
+            else
+                buffer[#buffer + 1] = character
+            end
+        end
+    end
+
+    if inString then
+        return nil, "Unterminated string in TOML array"
+    end
+
+    local trailing = trim(table.concat(buffer))
+    if trailing ~= "" then
+        values[#values + 1] = trailing
+    end
+
+    return values
+end
+
 local function parseArray(raw)
     local body = trim(raw:sub(2, -2))
     local out = {}
@@ -11,28 +125,26 @@ local function parseArray(raw)
         return out
     end
 
-    for token in body:gmatch("[^,]+") do
-        local value = trim(token)
-        if value:match('^".*"$') then
-            out[#out + 1] = value:sub(2, -2)
-        elseif tonumber(value) then
-            out[#out + 1] = tonumber(value)
-        elseif value == "true" then
-            out[#out + 1] = true
-        elseif value == "false" then
-            out[#out + 1] = false
-        else
-            out[#out + 1] = value
+    local values, valuesErr = splitArrayValues(body)
+    if not values then
+        return nil, valuesErr
+    end
+
+    for _, token in ipairs(values) do
+        local value, valueErr = Toml.parseValue(token)
+        if valueErr then
+            return nil, valueErr
         end
+        out[#out + 1] = value
     end
 
     return out
 end
 
-local function parseValue(raw)
+function Toml.parseValue(raw)
     local value = trim(raw)
     if value:match('^".*"$') then
-        return value:sub(2, -2)
+        return decodeString(value)
     end
 
     if value:sub(1, 1) == "[" and value:sub(-1) == "]" then
@@ -83,8 +195,10 @@ function Toml.parse(content)
     local result = {}
     local currentTable = result
 
+    local lineNumber = 0
     for line in (content .. "\n"):gmatch("(.-)\n") do
-        local cleaned = trim((line:gsub("#.*$", "")))
+        lineNumber = lineNumber + 1
+        local cleaned = trim(stripComment(line))
         if cleaned ~= "" then
             local tablePath = cleaned:match("^%[([%w_%.%-]+)%]$")
             if tablePath then
@@ -92,7 +206,13 @@ function Toml.parse(content)
             else
                 local key, rawValue = cleaned:match("^([%w_%.%-]+)%s*=%s*(.+)$")
                 if key and rawValue then
-                    setValue(currentTable, key, parseValue(rawValue))
+                    local parsedValue, parseErr = Toml.parseValue(rawValue)
+                    if parseErr then
+                        return nil, string.format("TOML parse error on line %d: %s", lineNumber, parseErr)
+                    end
+                    setValue(currentTable, key, parsedValue)
+                else
+                    return nil, string.format("TOML parse error on line %d: %s", lineNumber, cleaned)
                 end
             end
         end
