@@ -215,6 +215,30 @@ SVG files are registered by semantic name in `UI.new {icons = {...}}` and used w
 
 Buttons activate immediately on mouse press-down. Selected buttons likewise activate on the Space/Enter keypress; release only clears their pressed visual state and pointer/keyboard capture. Text fields support UTF-8 cursor positions, pointer selection, clipboard shortcuts, word deletion, Home/End, and declarative change/submit actions.
 
+A button with `hold` delays its ordinary `action` until it has remained pressed for the requested duration. Pointer holds cancel when the pointer leaves the button by default; early pointer, keyboard, or controller release also cancels and resets progress. The same behavior works through semantic `accept` input:
+
+```lua
+UI.button {
+    id = "hold-open-drawer",
+    label = "Hold to fully open drawer",
+    action = "open_drawer_fully",
+    hold = {
+        duration = 1,
+        started = "hold_started",   -- optional
+        progress = "hold_progress", -- optional; includes progress, elapsed, duration
+        cancelled = "hold_cancelled",
+        cancel_on_leave = true,
+    },
+    hold_indicator = {
+        direction = "right", -- right, left, down, or up
+        background = "white",
+        opacity = 0.3,
+    },
+}
+```
+
+`hold.completed` may provide a completion action instead of the button's normal `action`. `ui:hold_progress(id, view_key)` exposes the live `0`–`1` value, a `holding` interaction style can animate the held state, and shader uniform functions can read `environment.item.hold_progress`. This leaves the built-in fill optional while custom rendering and game behavior can react to the same lifecycle.
+
 ## Selection and controller navigation
 
 UI2D keeps mouse-only `hovered`, activation `pressed`, controller/keyboard `selected`, and text-editing `focused` states distinct. A pointer-hovered item also presents as selected while pointer input is active; actual controller or keyboard navigation switches selection back without a stationary cursor stealing it during declarative rebuilds. `hover_enter`, `hover_leave`, `press_started`, `press_ended`, `select_enter`, and `select_leave` actions allow behavior to follow the same lifecycle as the visual states.

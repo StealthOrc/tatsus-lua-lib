@@ -123,6 +123,18 @@ local Menu = UI.view("menu", function()
                 label = drawer_open and "Close lower drawer" or "Open lower drawer",
                 action = "toggle_drawer",
             },
+            UI.button {
+                id = "hold-open-drawer",
+                style = "motion",
+                label = "Hold to fully open drawer",
+                action = "open_drawer_fully",
+                hold = {duration = 1},
+                hold_indicator = {
+                    direction = "right",
+                    background = "white",
+                    opacity = 0.32,
+                },
+            },
             UI.button {id = "close-menu", style = "motion", label = "Close menu", action = "close_menu"},
         },
     }
@@ -414,6 +426,12 @@ ui = UI.new {
             else
                 show_drawer()
             end
+        elseif action.type == "open_drawer_fully" then
+            if not drawer_open then show_drawer() end
+            drawer_open = true
+            drawer_progress = DRAWER_EXPANDED
+            drawer_dragging = false
+            drawer_close_pending = false
         elseif action.type == "close_drawer" then
             ui:remove("tooltip")
             ui:remove("drawer")

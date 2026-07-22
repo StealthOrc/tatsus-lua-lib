@@ -26,6 +26,13 @@ local function input_source_kind(source)
     return source or "navigation"
 end
 
+local function hold_options(node)
+    if node.hold == nil or node.hold == false then return nil end
+    if type(node.hold) == "number" then return {duration = node.hold} end
+    assert(type(node.hold) == "table", "a button hold must be a duration or options table")
+    return node.hold
+end
+
 local function action_value(action, source_id, extra, view_key)
     local result
     if type(action) == "string" then
@@ -95,7 +102,7 @@ function Context:show(view, options)
     self.selections = {}
     self.selection_mode = self.initial_input_mode
     self.navigation_input = {x = 0, y = 0}
-    self.pointer_capture, self.keyboard_pressed = nil, nil
+    self.pointer_capture, self.keyboard_pressed, self.hold = nil, nil, nil
     self.cancelled_pointer_button = cancelled_pointer_button
     options = StyleSheet.copy(options or {})
     if options.layer == nil then options.layer = "base" end
@@ -139,6 +146,7 @@ function Context:discard(key)
         self.cancelled_pointer_button = 1
     end
     if self.keyboard_pressed and self.keyboard_pressed.key == key then self.keyboard_pressed = nil end
+    if self.hold and self.hold.key == key then self:cancel_hold("layer_removed") end
     self:update_hover()
     return true
 end
@@ -154,6 +162,7 @@ function Context:remove(key)
             self.cancelled_pointer_button = 1
         end
         if self.keyboard_pressed and self.keyboard_pressed.key == key then self.keyboard_pressed = nil end
+        if self.hold and self.hold.key == key then self:cancel_hold("layer_removed") end
         return true
     end
     return self:discard(key)
@@ -234,8 +243,98 @@ function Context:take_actions()
     return actions
 end
 
+function Context:start_hold(entry, item, source)
+    local options = hold_options(item.node)
+    if not options then return false end
+    local duration = tonumber(options.duration or options.seconds or 1)
+    assert(duration and duration > 0, "a button hold duration must be greater than zero")
+    if self.hold then
+        if same_handle(self.hold, entry.key, item.node.id) then return true end
+        self:cancel_hold("replaced")
+    end
+    self.hold = {
+        key = entry.key,
+        id = item.node.id,
+        elapsed = 0,
+        duration = duration,
+        progress = 0,
+        completed = false,
+        source = source,
+        options = options,
+        action = options.completed or item.node.action,
+    }
+    self:queue(options.started, item.node.id, {
+        progress = 0,
+        elapsed = 0,
+        duration = duration,
+        input_source = source,
+    }, entry.key)
+    return true
+end
+
+function Context:cancel_hold(reason)
+    local hold = self.hold
+    if not hold then return false end
+    self.hold = nil
+    if not hold.completed then
+        self:queue(hold.options.cancelled, hold.id, {
+            progress = hold.progress,
+            elapsed = hold.elapsed,
+            duration = hold.duration,
+            input_source = hold.source,
+            reason = reason or "cancelled",
+        }, hold.key)
+    end
+    return true
+end
+
+function Context:release_hold(key, id)
+    if not same_handle(self.hold, key, id) then return false end
+    return self:cancel_hold("released")
+end
+
+function Context:update_hold(dt)
+    local hold = self.hold
+    if not hold or hold.completed then return end
+    local entry = self.layers:get(hold.key)
+    local item = entry and entry.layout and entry.layout.by_id[hold.id]
+    if not item or not item.enabled then
+        self:cancel_hold("unavailable")
+        self.pressed = nil
+        return
+    end
+    hold.elapsed = math.min(hold.duration, hold.elapsed + math.max(0, dt or 0))
+    hold.progress = hold.elapsed / hold.duration
+    self:queue(hold.options.progress, hold.id, {
+        progress = hold.progress,
+        elapsed = hold.elapsed,
+        duration = hold.duration,
+        input_source = hold.source,
+    }, hold.key)
+    if hold.progress >= 1 then
+        hold.completed = true
+        self:queue(hold.action, hold.id, {
+            progress = 1,
+            elapsed = hold.duration,
+            duration = hold.duration,
+            input_source = hold.source,
+        }, hold.key)
+    end
+end
+
+function Context:hold_progress(id, view_key)
+    local hold = self.hold
+    if not hold or hold.id ~= id or (view_key and hold.key ~= view_key) then return 0 end
+    return hold.progress
+end
+
+function Context:is_holding(entry, id)
+    return same_handle(self.hold, entry.key, id)
+end
+
 function Context:update(dt)
     self.time = self.time + (dt or 0)
+    self:update_hold(dt or 0)
     local navigation_input = self.navigation_input
     if navigation_input.direction and navigation_input.repeat_at
         and self.time >= navigation_input.repeat_at
@@ -413,6 +512,10 @@ function Context:set_navigation_selection(entry, item, source)
     if not entry then return false end
     local previous = self.selections[entry.key]
     local was_active = self.selection_mode ~= "pointer"
+    if self.hold and input_source_kind(self.hold.source) ~= input_source_kind(source) then
+        self:cancel_hold("input_mode_changed")
+        self.pressed = nil
+    end
     if self.input_mode_policy == "automatic" and self.hovered then
         local hovered = self.hovered
         self.hovered = nil
@@ -432,6 +535,12 @@ function Context:set_navigation_selection(entry, item, source)
                 {selection_source = source}, entry.key)
         end
         return true
+    end
+    if self.hold and self.hold.key == entry.key
+        and (not item or self.hold.id ~= item.node.id)
+    then
+        self:cancel_hold("selection_changed")
+        self.pressed = nil
     end
     if previous and was_active then
         local previous_item = entry.layout and entry.layout.by_id[previous.id]
@@ -454,6 +563,10 @@ end
 
 function Context:use_pointer_selection()
     if self.selection_mode == "pointer" then return end
+    if self.hold and input_source_kind(self.hold.source) ~= "pointer" then
+        self:cancel_hold("input_mode_changed")
+        self.pressed = nil
+    end
     local entry = self:navigation_owner()
     local selection = self:navigation_selection(entry)
     local item = selection and entry and entry.layout and entry.layout.by_id[selection.id]
@@ -538,7 +651,9 @@ function Context:activate_selection(source)
     self.pressed = {key = entry.key, id = item.node.id}
     self.keyboard_pressed = {key = entry.key, id = item.node.id, semantic = true}
     self:queue(item.node.press_started, item.node.id, {input_source = source}, entry.key)
-    self:queue(item.node.action, item.node.id, {input_source = source}, entry.key)
+    if not self:start_hold(entry, item, source) then
+        self:queue(item.node.action, item.node.id, {input_source = source}, entry.key)
+    end
     return true
 end
 
@@ -547,6 +662,7 @@ function Context:release_selection(source)
     if not pressed or not pressed.semantic then return false end
     local entry = self.layers:get(pressed.key)
     local item = entry and entry.layout and entry.layout.by_id[pressed.id]
+    self:release_hold(pressed.key, pressed.id)
     if item then self:queue(item.node.press_ended, item.node.id, {input_source = source}, entry.key) end
     self.keyboard_pressed, self.pressed = nil, nil
     return true
@@ -636,6 +752,7 @@ function Context:event(name, ...)
         self:rebuild()
         return #self.layers.entries > 0
     elseif name == "focus" and args[1] == false then
+        self:cancel_hold("focus_lost")
         self.pressed, self.pointer_capture, self.keyboard_pressed = nil, nil, nil
         self.cancelled_pointer_button = nil
         return false
@@ -646,6 +763,13 @@ function Context:event(name, ...)
         if capture then
             local entry = self.layers:get(capture.key)
             local item = entry and entry.layout.by_id[capture.id]
+            local options = item and hold_options(item.node)
+            if options and options.cancel_on_leave ~= false
+                and not point_in_item(item, self.pointer_x, self.pointer_y)
+            then
+                self:cancel_hold("pointer_left")
+                self.pressed = nil
+            end
             if item and capture.draggable then
                 local values = drag_values(capture, self.pointer_x, self.pointer_y)
                 self:queue(item.node.dragged, item.node.id, values, entry.key)
@@ -697,8 +821,10 @@ function Context:event(name, ...)
             self:queue(item.node.press_started, item.node.id,
                 {input_source = "pointer"}, route.entry.key)
             if item.kind == "button" then
-                self:queue(item.node.action, item.node.id,
-                    {input_source = "pointer"}, route.entry.key)
+                if not self:start_hold(route.entry, item, "pointer") then
+                    self:queue(item.node.action, item.node.id,
+                        {input_source = "pointer"}, route.entry.key)
+                end
             end
             self:update_hover()
             return true
@@ -720,6 +846,7 @@ function Context:event(name, ...)
             local entry = self.layers:get(capture.key)
             local item = entry and entry.layout.by_id[capture.id]
             local values = drag_values(capture, self.pointer_x, self.pointer_y)
+            self:release_hold(capture.key, capture.id)
             if item and capture.draggable then
                 self:queue(item.node.drag_ended, item.node.id, values, entry.key)
             end

@@ -132,6 +132,33 @@ function Renderer:button_background(item, state, scale, alpha, surfaces, environ
             love.graphics.rectangle("fill", item.rect.x, item.rect.y, item.rect.w, item.rect.h, radius, radius)
         end)
 
+    local indicator = item.node.hold_indicator
+    if indicator == nil then indicator = style.hold_indicator end
+    if indicator and state.hold_progress > 0 then
+        if indicator == true then indicator = {} end
+        local direction = indicator.direction or "right"
+        local x, y, width, height = item.rect.x, item.rect.y, item.rect.w, item.rect.h
+        if direction == "left" then
+            width = width * state.hold_progress
+            x = item.rect.x + item.rect.w - width
+        elseif direction == "up" then
+            height = height * state.hold_progress
+            y = item.rect.y + item.rect.h - height
+        elseif direction == "down" then
+            height = height * state.hold_progress
+        else
+            width = width * state.hold_progress
+        end
+        local fill = color(self.styles, indicator.background or indicator.color or style.foreground)
+        local fill_alpha = indicator.opacity == nil and 0.28 or indicator.opacity
+        self:with_surface(surfaces.background, "background", item, environment.context,
+            environment.layout, environment.entry, alpha, function()
+                set_color(fill, alpha * fill_alpha)
+                love.graphics.rectangle("fill", x, y, width, height,
+                    math.min(radius, width / 2), math.min(radius, height / 2))
+            end)
+    end
+
     self:draw_border(item, interaction.border or style.border,
         radius, scale, alpha, surfaces.border, environment)
 
@@ -243,7 +270,10 @@ local function draw_item(self, item, context, layout, entry, inherited_alpha, in
         selected = context:is_selected(entry, item.node.id),
         pressed = context:is_pressed(entry, item.node.id),
         focused = context:is_focused(entry, item.node.id),
+        holding = context:is_holding(entry, item.node.id),
+        hold_progress = context:hold_progress(item.node.id, entry.key),
     }
+    item.hold_progress = state.hold_progress
     local environment = {context = context, layout = layout, entry = entry}
     if item.kind == "screen" or item.kind == "panel" or item.kind == "row"
         or item.kind == "column" or item.kind == "stack"

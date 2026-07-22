@@ -94,6 +94,7 @@ local function visual_targets(entry, item, layout, context)
         if context:is_focused(entry, item.node.id) then apply("focused") end
         if context:is_selected(entry, item.node.id) then apply("selected") end
         if context:is_hovered(entry, item.node.id) then apply("hovered") end
+        if context:is_holding(entry, item.node.id) then apply("holding") end
         if context:is_pressed(entry, item.node.id) then apply("pressed") end
     end
     return Layout.resolve_visual_transform(item, layout, transform), opacity
