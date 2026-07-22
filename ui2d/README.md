@@ -10,6 +10,7 @@ Bare numbers are logical UI units. They are multiplied by the stylesheet's viewp
 width = UI.percent(0.5) -- half of the parent's inner width (0.0 through 1.0)
 gap = UI.em(0.5)       -- half of the enclosing text size, or the root size as fallback
 width = UI.rem(20)      -- twenty root-font units
+x = UI.px(320)          -- exact screen pixels, useful with pointer/rect geometry
 ```
 
 `"fill"` consumes available space and `"content"` uses measured content. These measurements belong to the stylesheet rather than a theme: a stylesheet may contain structural spacing, typography, shape, and color tokens.
@@ -103,6 +104,8 @@ ui:push(DrawerView, {
 View Layers block pointer and keyboard input by default. A pass-through layer continues routing when no interactive node or panel occupies the pointer position; use `keyboard = "pass"` independently when game input should remain available. Buttons and text fields always consume pointer input; `UI.panel` creates a blocking Hit Region by default, and `pointer = "pass"` makes a panel decorative. The built-in layer names are `base`, `overlay`, `popover`, and `tooltip`; configure or override them with `UI.new {layers = {...}}`.
 
 Node IDs need only be unique within a View Layer. Actions include both `source` and `view`. Buttons may emit `hover_enter` and `hover_leave` actions, which can mount and remove tooltip layers.
+
+For adaptive tooltip placement, `ui:pointer()` returns the current pointer coordinates, `ui:viewport()` returns the drawable size, and `ui:rect(id, view_key)` returns a node's transformed screen-space bounds. Wrap those screen coordinates in `UI.px(...)` when feeding them back into a node transform. This supports fixed viewport anchors, pointer-following tooltips, and target-relative placement that chooses above or below based on available space. A pointer-following panel can explicitly use `pointer = "pass"` to avoid interrupting its own hover source, while fixed or target-relative tooltip panels remain ordinary input blockers.
 
 ## Flex layout and Local Z-order
 

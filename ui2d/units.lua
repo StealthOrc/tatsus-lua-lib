@@ -27,6 +27,10 @@ function Units.rem(value)
     return unit("rem", value)
 end
 
+function Units.px(value)
+    return unit("px", value)
+end
+
 function Units.is(value, kind)
     return type(value) == "table"
         and value.__ui2d_unit == true
@@ -47,6 +51,8 @@ function Units.resolve(value, available, context)
         return (context.font_size or context.root_font_size or 16) * value.value
     elseif value.kind == "rem" then
         return (context.root_font_size or 16) * value.value
+    elseif value.kind == "px" then
+        return value.value
     end
     error("unknown ui2d unit: " .. tostring(value.kind))
 end

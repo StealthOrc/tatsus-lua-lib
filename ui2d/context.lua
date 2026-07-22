@@ -520,4 +520,12 @@ function Context:rect(id, view_key)
     return nil
 end
 
+function Context:pointer()
+    return self.pointer_x, self.pointer_y
+end
+
+function Context:viewport()
+    return love.graphics.getDimensions()
+end
+
 return Context

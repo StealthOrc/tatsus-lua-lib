@@ -9,6 +9,7 @@ local UI = {
     percent = Units.percent,
     em = Units.em,
     rem = Units.rem,
+    px = Units.px,
     view = Nodes.view,
     screen = Nodes.screen,
     row = Nodes.row,
