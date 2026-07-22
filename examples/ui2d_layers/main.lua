@@ -136,7 +136,7 @@ local Menu = UI.view("menu", function()
                     opacity = 0.32,
                 },
             },
-            UI.button {id = "close-menu", style = "motion", label = "B · Close menu", action = "close_menu"},
+            UI.button {id = "close-menu", style = "motion", label = "Close menu", action = "close_menu"},
         },
     }
 end)
@@ -258,7 +258,7 @@ local Drawer = UI.view("drawer", function(model)
                         label = expanded and "Lower drawer" or "Pull drawer further up",
                         action = expanded and "close_perks" or "open_perks",
                     },
-                    UI.button {id = "close-drawer", style = "motion", label = "B · Close drawer", action = "close_drawer"},
+                    UI.button {id = "close-drawer", style = "motion", label = "Close drawer", action = "close_drawer"},
                 },
                 UI.text {value = "Shader Surfaces / Perk Draft", style = "title"},
                 UI.text {value = "These cards always live below the controls in this same view.", style = "body"},
