@@ -1,5 +1,5 @@
 function love.conf(config)
-    config.window.title = "tatsus-lua-lib ui2d layers and motion"
+    config.window.title = "UI in Motion · tatsus-lua-lib ui2d"
     config.window.width = 960
     config.window.height = 640
     config.window.resizable = true

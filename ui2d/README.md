@@ -296,7 +296,7 @@ ui:input {action = "accept", phase = "pressed", source = {kind = "gamepad"}}
 ui:input {action = "accept", phase = "released", source = {kind = "gamepad"}}
 ```
 
-The default `input_mode = "automatic"` treats the most recently intentional source as authoritative. Controller or keyboard navigation suspends mouse hover and ignores pointer presses until the mouse actually moves; that movement switches back to pointer mode and refreshes hover at the new position. `ui:input_mode()` reports `pointer`, `keyboard`, `gamepad`, or another semantic source kind, allowing pointer-anchored UI such as tooltips to fall back to the selected node while the controller is active.
+The default `input_mode = "automatic"` treats the most recently intentional source as authoritative. Controller or keyboard navigation suspends mouse hover and ignores pointer presses until the mouse actually moves; that movement switches back to pointer mode and refreshes hover at the new position. The first semantic accept press after changing from pointer, keyboard, or gamepad mode claims and presents the retained Selection without activating it; a following press from the same source activates normally. If no navigable element owns the current layer, the handoff is not consumed. `ui:input_mode()` reports `pointer`, `keyboard`, `gamepad`, or another semantic source kind, allowing pointer-anchored UI such as tooltips to fall back to the selected node while the controller is active.
 
 Use `UI.new {input_mode = "simultaneous"}` when an interface intentionally wants retained mouse hover and controller Selection to remain active together. `initial_input_mode` may override the default initial `pointer` mode.
 
@@ -358,7 +358,7 @@ Run the example from the repository root:
 & "C:\Program Files\LOVE\lovec.exe" --console examples\ui2d_fire_button
 ```
 
-The layered, animated example exercises full-screen blocking, a partial pass-through drawer that can tween the same panel to full-screen, a tooltip Hit Blocker, shadered perk-card surfaces, flex layout, hover transitions, and reversible View Layer transitions:
+The UI in Motion example exercises full-screen blocking, a partial pass-through drawer that can tween the same panel to full-screen, a tooltip Hit Blocker, shadered perk-card surfaces, flex layout, hover transitions, and reversible View Layer transitions:
 
 ```powershell
 & "C:\Program Files\LOVE\lovec.exe" --console examples\ui2d_layers

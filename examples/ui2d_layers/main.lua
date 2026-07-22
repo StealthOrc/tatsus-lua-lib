@@ -93,7 +93,7 @@ local Hud = UI.view("hud", function()
             anchor = "center",
             align = "center",
             gap = 12,
-            UI.text {value = "Layers in Motion", style = "title"},
+            UI.text {value = "UI in Motion", style = "title"},
             UI.text {
                 value = "Try me with a mouse or gamepad — click below or press accept.",
                 style = "body",

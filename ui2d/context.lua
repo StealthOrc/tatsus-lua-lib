@@ -887,6 +887,25 @@ function Context:activate_selection(source)
     return true
 end
 
+function Context:accept_selection(source)
+    local source_kind = input_source_kind(source)
+    if self.input_mode_policy == "automatic"
+        and source_kind ~= "pointer"
+        and self.selection_mode ~= source_kind
+    then
+        local entry = self:navigation_owner()
+        local layout = entry and entry.layout
+        if not layout or #(layout.navigable or {}) == 0 then return false end
+        local selection = self:navigation_selection(entry)
+        local item = selection and layout.by_id[selection.id]
+        if not item or not item.enabled or not item.navigation_enabled then
+            item = Navigation.first(layout, self:navigation_options_for(entry).initial)
+        end
+        return item and self:set_navigation_selection(entry, item, source) or false
+    end
+    return self:activate_selection(source)
+end
+
 function Context:release_selection(source)
     local pressed = self.keyboard_pressed
     if not pressed or not pressed.semantic then return false end
@@ -907,7 +926,7 @@ function Context:input(event)
     local source = event.source or "navigation"
     if action == "accept" then
         if event.phase == "released" then return self:release_selection(source) end
-        if event.phase == nil or event.phase == "pressed" then return self:activate_selection(source) end
+        if event.phase == nil or event.phase == "pressed" then return self:accept_selection(source) end
         return false
     elseif action ~= "navigate" then
         return false
@@ -1122,7 +1141,7 @@ function Context:event(name, ...)
             return self:navigate(key, "keyboard")
         end
         if key == "space" or key == "return" or key == "kpenter" then
-            return self:activate_selection("keyboard")
+            return self:accept_selection("keyboard")
         end
         return owner ~= nil
     elseif name == "keyreleased" then
