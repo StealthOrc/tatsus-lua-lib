@@ -92,8 +92,14 @@ end
 
 local function measure_container(node, available_w, available_h, env)
     local padding = insets(node.padding, available_w, available_h, env)
-    local inner_w = math.max(0, available_w - padding.left - padding.right)
-    local inner_h = math.max(0, available_h - padding.top - padding.bottom)
+    local width_value = resolve_token(env.styles, node.width)
+    local height_value = resolve_token(env.styles, node.height)
+    local resolved_w = width_value ~= nil and width_value ~= "content"
+        and dimension(width_value, available_w, 0, env) or nil
+    local resolved_h = height_value ~= nil and height_value ~= "content"
+        and dimension(height_value, available_h, 0, env) or nil
+    local inner_w = math.max(0, (resolved_w or available_w) - padding.left - padding.right)
+    local inner_h = math.max(0, (resolved_h or available_h) - padding.top - padding.bottom)
     local gap = length(node.gap or 0, node.kind == "row" and inner_w or inner_h, env) or 0
     local children = {}
     local content_w, content_h = 0, 0

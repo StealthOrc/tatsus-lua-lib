@@ -292,6 +292,13 @@ function Bindings:active_device()
     return copy(self.active)
 end
 
+function Bindings:set_active_device(scheme, id)
+    assert(scheme == "keyboard" or scheme == "gamepad",
+        "active input scheme must be keyboard or gamepad")
+    self.active = {kind = scheme, id = id or scheme}
+    return self
+end
+
 function Bindings:prompts(action, scheme)
     local definitions = self.bindings[scheme or self.active.kind] or {}
     return copy(bindings_list(definitions[action]))

@@ -3,6 +3,7 @@ local Nodes = require("ui2d.nodes")
 local StyleSheetModule = require("ui2d.style_sheet")
 local TextEditor = require("ui2d.text_editor")
 local Units = require("ui2d.units")
+local Components = require("ui2d.components")
 
 local UI = {
     TextEditor = TextEditor,
@@ -21,6 +22,7 @@ local UI = {
     spacer = Nodes.spacer,
     button = Nodes.button,
     text_field = Nodes.text_field,
+    segmented_control = Components.segmented_control,
 }
 
 UI.StyleSheet = setmetatable({new = StyleSheetModule.new}, {

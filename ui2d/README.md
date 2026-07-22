@@ -249,6 +249,29 @@ UI.button {
 
 `hold.completed` may provide a completion action instead of the button's normal `action`. `ui:hold_progress(id, view_key)` exposes the live `0`–`1` value, a `holding` interaction style can animate the held state, and shader uniform functions can read `environment.item.hold_progress`. This leaves the built-in fill optional while custom rendering and game behavior can react to the same lifecycle.
 
+## Segmented controls
+
+`UI.segmented_control` is a reusable, controller-navigable choice between two or more mutually exclusive values. Each segment is an ordinary UI2D button, so pointer press-down, semantic selection and accept, disabled state, styles, and navigation all work without a separate input adapter. The indicator animates between values when the view model changes:
+
+```lua
+UI.segmented_control {
+    id = "movement-shape",
+    value = model.movement_shape,
+    options = {
+        {value = "stick", label = "STICK"},
+        {value = "axes", label = "AXES"},
+        {value = "directions", label = "DIRECTIONS"},
+    },
+    changed = "set_movement_shape",
+    button_style = "segment",
+    selected_style = "segment_active",
+    background = "panel_soft",
+    indicator_background = "accent_soft",
+}
+```
+
+The dispatched action includes `control`, `value`, and the one-based `index`. `changed` may also be an action table, and `enabled = false` disables every segment.
+
 ## Selection and controller navigation
 
 UI2D keeps mouse-only `hovered`, activation `pressed`, controller/keyboard `selected`, and text-editing `focused` states distinct. A pointer-hovered item also presents as selected while pointer input is active; actual controller or keyboard navigation switches selection back without a stationary cursor stealing it during declarative rebuilds. `hover_enter`, `hover_leave`, `press_started`, `press_ended`, `select_enter`, and `select_leave` actions allow behavior to follow the same lifecycle as the visual states.

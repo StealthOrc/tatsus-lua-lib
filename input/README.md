@@ -76,7 +76,9 @@ controls:begin_capture("save", "keyboard")
 controls:begin_capture("accept", "gamepad", {append = true})
 ```
 
-Keyboard capture retains held modifiers as a chord. Gamepad capture records buttons, individual axes, axis directions for button actions, or a complete stick for `axis2d` actions. `set` changes one Binding Set, `active_device` reports the most recently meaningful source, and `export` returns a persistence-ready plain Lua table.
+Keyboard capture retains held modifiers as a chord. Gamepad capture records buttons, individual axes, axis directions for button actions, or a complete stick for `axis2d` actions. `set` changes one Binding Set, `active_device` reports the most recently meaningful source, and `export` returns a persistence-ready plain Lua table. Pointer callbacks can explicitly return a shared keyboard-and-pointer interface to that display mode with `controls:set_active_device("keyboard")`; this changes only the active prompt scheme and never rewrites bindings.
+
+The example is a small playable Color Rite game rather than a static control table. WASD and the gamepad bindings move the courier between pigment wells and a central recipe seal; Left Shift or the standardized `rightshoulder` button (RB / R1) triggers its separately rebindable dash. Press Escape or Start to open the centered UI2D controls layer. Its gamepad-only segmented control demonstrates the same movement intention represented as one whole stick, two independent axes, or four independently rebindable directions.
 
 Run the interactive example from the repository root:
 
