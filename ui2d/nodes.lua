@@ -5,6 +5,7 @@ local kinds = {
     row = true,
     column = true,
     stack = true,
+    panel = true,
     text = true,
     icon = true,
     spacer = true,

@@ -4,15 +4,22 @@ local TextEditor = require("ui2d.text_editor")
 local Svg = require("ui2d.svg")
 local Layout = require("ui2d.layout")
 local Renderer = require("ui2d.renderer")
+local LayerStack = require("ui2d.layer_stack")
+local Transform = require("ui2d.transform")
+local Motion = require("ui2d.motion")
 
 local Context = {}
 Context.__index = Context
 
-local function point_in(rect, x, y)
-    return rect and x >= rect.x and x <= rect.x + rect.w and y >= rect.y and y <= rect.y + rect.h
+local function point_in_item(item, x, y)
+    return item and Transform.contains(item.world_transform, item.rect, x, y)
 end
 
-local function action_value(action, source_id, extra)
+local function same_handle(handle, key, id)
+    return handle and handle.key == key and handle.id == id
+end
+
+local function action_value(action, source_id, extra, view_key)
     local result
     if type(action) == "string" then
         result = {type = action}
@@ -22,6 +29,7 @@ local function action_value(action, source_id, extra)
         return nil
     end
     if result.source == nil then result.source = source_id end
+    if result.view == nil then result.view = view_key end
     for key, value in pairs(extra or {}) do result[key] = value end
     return result
 end
@@ -31,51 +39,108 @@ function Context.new(config)
     local styles = config.styles
     if getmetatable(styles) ~= StyleSheet then styles = StyleSheet.new(styles or {}) end
     local icons = Svg.Cache.new(config.icons)
-    local self = setmetatable({
+    return setmetatable({
         styles = styles,
         icons = icons,
         fonts = FontCache.new(styles),
         renderer = Renderer.new(styles, icons),
         dispatch = config.dispatch,
+        layers = LayerStack.new(config.layers),
+        motion = Motion.new(),
         editors = {},
         actions = {},
         time = 0,
         pointer_x = 0,
         pointer_y = 0,
     }, Context)
-    return self
 end
 
 function Context:show(view, options)
-    assert(type(view) == "table" and view.__ui2d_view, "show expects UI.view")
-    options = options or {}
-    self.view = view
-    self.model = options.model or {}
-    self.layout = nil
-    self.hovered_id = nil
-    self.pressed_id = nil
-    self.focused_id = nil
-    self.pointer_capture = nil
+    local cancelled_pointer_button = self.pointer_capture and 1 or self.cancelled_pointer_button
+    self.layers:clear()
+    self.motion = Motion.new()
+    self.editors = {}
+    self.hovered, self.pressed, self.focused = nil, nil, nil
+    self.pointer_capture, self.keyboard_pressed = nil, nil
+    self.cancelled_pointer_button = cancelled_pointer_button
+    options = StyleSheet.copy(options or {})
+    if options.layer == nil then options.layer = "base" end
+    self:push(view, options)
     return self
 end
 
-function Context:model_value()
-    return type(self.model) == "function" and self.model() or self.model
+function Context:push(view, options)
+    assert(type(view) == "table" and view.__ui2d_view, "push expects UI.view")
+    options = options or {}
+    local key = options.key or view.id
+    local existing = self.layers:get(key)
+    if existing and existing.exiting then
+        existing.exiting = false
+        existing.view = view
+        existing.model = options.model or existing.model
+        self.motion:enter_layer(existing)
+        return existing.key
+    end
+    local entry = self.layers:push(view, options)
+    self.editors[entry.key] = self.editors[entry.key] or {}
+    self.motion:add_layer(entry)
+    return entry.key
 end
 
-function Context:editor_for(node)
-    local editor = self.editors[node.id]
+function Context:discard(key)
+    local entry = self.layers:remove(key)
+    if not entry then return false end
+    self.editors[key] = nil
+    self.motion:remove_layer(key)
+    if self.hovered and self.hovered.key == key then self.hovered = nil end
+    if self.pressed and self.pressed.key == key then self.pressed = nil end
+    if self.focused and self.focused.key == key then self.focused = nil end
+    if self.pointer_capture and self.pointer_capture.key == key then
+        self.pointer_capture = nil
+        self.cancelled_pointer_button = 1
+    end
+    if self.keyboard_pressed and self.keyboard_pressed.key == key then self.keyboard_pressed = nil end
+    self:update_hover()
+    return true
+end
+
+function Context:remove(key)
+    local entry = self.layers:get(key)
+    if not entry then return false end
+    if entry.exiting then return true end
+    if entry.transition and self.motion:exit_layer(entry) then
+        entry.exiting = true
+        if self.pointer_capture and self.pointer_capture.key == key then
+            self.pointer_capture = nil
+            self.cancelled_pointer_button = 1
+        end
+        if self.keyboard_pressed and self.keyboard_pressed.key == key then self.keyboard_pressed = nil end
+        return true
+    end
+    return self:discard(key)
+end
+
+function Context:pop()
+    local entry = self.layers.entries[#self.layers.entries]
+    return entry and self:remove(entry.key) or false
+end
+
+function Context:model_value(entry)
+    return type(entry.model) == "function" and entry.model() or entry.model
+end
+
+function Context:editor_for(entry, node)
+    local editors = self.editors[entry.key]
+    local editor = editors[node.id]
     if not editor then
-        editor = TextEditor.new {
-            value = node.value,
-            max_length = node.max_length,
-            filter = node.filter,
-        }
-        self.editors[node.id] = editor
+        editor = TextEditor.new {value = node.value, max_length = node.max_length, filter = node.filter}
+        editors[node.id] = editor
     else
         editor.max_length = node.max_length
         editor.filter = node.filter
-        if node.value ~= nil and self.focused_id ~= node.id and tostring(node.value) ~= editor:value() then
+        if node.value ~= nil and not same_handle(self.focused, entry.key, node.id)
+            and tostring(node.value) ~= editor:value()
+        then
             editor:set_value(node.value)
         end
     end
@@ -83,21 +148,27 @@ function Context:editor_for(node)
 end
 
 function Context:rebuild()
-    if not self.view then return end
-    local root = self.view.build(self:model_value() or {})
     local width, height = love.graphics.getDimensions()
-    self.layout = Layout.build(root, width, height, {
-        styles = self.styles,
-        fonts = self.fonts,
-        icons = self.icons,
-        editor_for = function(node) return self:editor_for(node) end,
-    })
-    if self.focused_id and not self.layout.by_id[self.focused_id] then self.focused_id = nil end
+    for _, entry in ipairs(self.layers.entries) do
+        local root = entry.view.build(self:model_value(entry) or {})
+        entry.layout = Layout.build(root, width, height, {
+            styles = self.styles,
+            fonts = self.fonts,
+            icons = self.icons,
+            editor_for = function(node) return self:editor_for(entry, node) end,
+        })
+        self.motion:reconcile(entry, entry.layout, self)
+        self.motion:apply(entry)
+    end
+    if self.focused then
+        local entry = self.layers:get(self.focused.key)
+        if not entry or not entry.layout.by_id[self.focused.id] then self.focused = nil end
+    end
     self:update_hover()
 end
 
-function Context:queue(action, source_id, extra)
-    local value = action_value(action, source_id, extra)
+function Context:queue(action, source_id, extra, view_key)
+    local value = action_value(action, source_id, extra, view_key)
     if value then self.actions[#self.actions + 1] = value end
 end
 
@@ -113,34 +184,94 @@ function Context:update(dt)
         for _, action in ipairs(self:take_actions()) do self.dispatch(action) end
     end
     self:rebuild()
+    self.motion:update(dt or 0)
+    for _, entry in ipairs(self.layers.entries) do self.motion:apply(entry) end
+    local exited = {}
+    for _, entry in ipairs(self.layers.entries) do
+        if entry.exiting and self.motion:layer_exited(entry) then exited[#exited + 1] = entry.key end
+    end
+    for _, key in ipairs(exited) do self:discard(key) end
+    self:update_hover()
 end
 
 function Context:draw()
-    if not self.layout then self:rebuild() end
-    self.renderer:draw(self.layout, self)
+    if #self.layers.entries > 0 and not self.layers.entries[1].layout then self:rebuild() end
+    for _, entry in ipairs(self.layers.entries) do
+        self.renderer:draw(entry.layout, self, entry)
+    end
+end
+
+function Context:route_at(x, y)
+    for index = #self.layers.entries, 1, -1 do
+        local entry = self.layers.entries[index]
+        local layout = entry.layout
+        if layout then
+            for region_index = #layout.hit_regions, 1, -1 do
+                local region = layout.hit_regions[region_index]
+                if point_in_item(region.item, x, y) then
+                    return {
+                        entry = entry,
+                        item = region.interactive and region.item or nil,
+                        blocker = region.blocks and region.item or nil,
+                        consumed = true,
+                    }
+                end
+            end
+            if entry.pointer ~= "pass" or layout.modal then
+                return {entry = entry, consumed = true}
+            end
+        end
+    end
+    return {consumed = false}
 end
 
 function Context:item_at(x, y)
-    if not self.layout then return nil end
-    for index = #self.layout.interactive, 1, -1 do
-        local item = self.layout.interactive[index]
-        if point_in(item.rect, x, y) then return item end
-    end
-    return nil
+    return self:route_at(x, y).item
 end
 
 function Context:update_hover()
-    local item = self:item_at(self.pointer_x, self.pointer_y)
-    self.hovered_id = item and item.enabled and item.node.id or nil
+    local route = self:route_at(self.pointer_x, self.pointer_y)
+    local item = route.item
+    local next_hovered = item and item.enabled and {key = route.entry.key, id = item.node.id} or nil
+    local unchanged = (self.hovered == nil and next_hovered == nil)
+        or (self.hovered and next_hovered
+            and self.hovered.key == next_hovered.key and self.hovered.id == next_hovered.id)
+    if unchanged then return end
+
+    local previous = self.hovered
+    self.hovered = next_hovered
+    if previous then
+        local entry = self.layers:get(previous.key)
+        local previous_item = entry and entry.layout and entry.layout.by_id[previous.id]
+        if previous_item then
+            self:queue(previous_item.node.hover_leave, previous.id, nil, previous.key)
+        end
+    end
+    if next_hovered then
+        self:queue(item.node.hover_enter, item.node.id, nil, route.entry.key)
+    end
+end
+
+function Context:is_hovered(entry, id)
+    return same_handle(self.hovered, entry.key, id)
+end
+
+function Context:is_pressed(entry, id)
+    return same_handle(self.pressed, entry.key, id)
+end
+
+function Context:is_focused(entry, id)
+    return same_handle(self.focused, entry.key, id)
 end
 
 function Context:cursor_from_x(item, x)
     local style = item.style
     local padding_x = Layout.resolve_length(style.padding_x or 0, item.rect.w, {
         styles = self.styles,
-        scale = self.layout.scale,
+        scale = item.layout_scale,
     }) or 0
-    local local_x = x - item.rect.x - padding_x + (item.editor.scroll_x or 0)
+    local transformed_x = Transform.unapply(item.world_transform, x, self.pointer_y)
+    local local_x = (transformed_x or x) - item.rect.x - padding_x + (item.editor.scroll_x or 0)
     if local_x <= 0 then return 0 end
     local previous = 0
     for position = 1, item.editor:length() do
@@ -151,8 +282,9 @@ function Context:cursor_from_x(item, x)
     return item.editor:length()
 end
 
-function Context:emit_editor_change(item)
-    self:queue(item.node.changed or item.node.change_action, item.node.id, {value = item.editor:value()})
+function Context:emit_editor_change(entry, item)
+    self:queue(item.node.changed or item.node.change_action, item.node.id,
+        {value = item.editor:value()}, entry.key)
 end
 
 function Context:modifiers()
@@ -164,24 +296,34 @@ function Context:modifiers()
     }
 end
 
-function Context:focus_adjacent(direction)
-    if not self.layout or #self.layout.interactive == 0 then return false end
-    local current = 0
-    for index, item in ipairs(self.layout.interactive) do
-        if item.node.id == self.focused_id then current = index break end
+function Context:keyboard_owner()
+    for index = #self.layers.entries, 1, -1 do
+        local entry = self.layers.entries[index]
+        if entry.keyboard ~= "pass" then return entry end
     end
-    for step = 1, #self.layout.interactive do
-        local index = ((current - 1 + direction * step) % #self.layout.interactive) + 1
-        local item = self.layout.interactive[index]
+    return nil
+end
+
+function Context:focus_adjacent(direction)
+    local entry = self:keyboard_owner()
+    local layout = entry and entry.layout
+    if not layout or #layout.interactive == 0 then return false end
+    local current = 0
+    for index, item in ipairs(layout.interactive) do
+        if same_handle(self.focused, entry.key, item.node.id) then current = index break end
+    end
+    for step = 1, #layout.interactive do
+        local index = ((current - 1 + direction * step) % #layout.interactive) + 1
+        local item = layout.interactive[index]
         if item.enabled then
-            self.focused_id = item.node.id
+            self.focused = {key = entry.key, id = item.node.id}
             return true
         end
     end
     return false
 end
 
-function Context:field_keypressed(item, key)
+function Context:field_keypressed(entry, item, key)
     local editor = item.editor
     local modifiers = self:modifiers()
     local shortcut = modifiers.ctrl or modifiers.command
@@ -210,100 +352,126 @@ function Context:field_keypressed(item, key)
     elseif key == "end" then
         editor:move_to(editor:length(), modifiers.shift)
     elseif key == "return" or key == "kpenter" then
-        self:queue(item.node.submit, item.node.id, {value = editor:value()})
+        self:queue(item.node.submit, item.node.id, {value = editor:value()}, entry.key)
     elseif key == "escape" then
-        self.focused_id = nil
+        self.focused = nil
     else
         return false
     end
-    if changed then self:emit_editor_change(item) end
+    if changed then self:emit_editor_change(entry, item) end
     return true
 end
 
 function Context:event(name, ...)
-    if not self.layout and self.view then self:rebuild() end
+    if #self.layers.entries > 0 and not self.layers.entries[1].layout then self:rebuild() end
     local args = {...}
     if name == "resize" then
         self:rebuild()
-        return self.layout and self.layout.modal or false
+        return #self.layers.entries > 0
     elseif name == "focus" and args[1] == false then
-        self.pressed_id, self.pointer_capture, self.keyboard_pressed_id = nil, nil, nil
+        self.pressed, self.pointer_capture, self.keyboard_pressed = nil, nil, nil
+        self.cancelled_pointer_button = nil
         return false
     elseif name == "mousemoved" then
         self.pointer_x, self.pointer_y = args[1], args[2]
         if self.pointer_capture and self.pointer_capture.kind == "text_field" then
-            local item = self.layout.by_id[self.pointer_capture.id]
+            local entry = self.layers:get(self.pointer_capture.key)
+            local item = entry and entry.layout.by_id[self.pointer_capture.id]
             if item then item.editor:move_to(self:cursor_from_x(item, self.pointer_x), true) end
         end
         self:update_hover()
-        return self.pointer_capture ~= nil or self.hovered_id ~= nil or (self.layout and self.layout.modal)
+        return self.pointer_capture ~= nil or self:route_at(self.pointer_x, self.pointer_y).consumed
     elseif name == "mousepressed" then
         self.pointer_x, self.pointer_y = args[1], args[2]
-        local button = args[3]
-        local item = button == 1 and self:item_at(self.pointer_x, self.pointer_y) or nil
-        if item and item.enabled then
-            self.focused_id = item.node.id
-            self.pressed_id = item.node.id
-            self.pointer_capture = {id = item.node.id, kind = item.kind}
+        if self.cancelled_pointer_button == args[3] then self.cancelled_pointer_button = nil end
+        local route = self:route_at(self.pointer_x, self.pointer_y)
+        local item = route.item
+        if args[3] == 1 and item and item.enabled then
+            local handle = {key = route.entry.key, id = item.node.id}
+            self.focused, self.pressed = handle, {key = handle.key, id = handle.id}
+            self.pointer_capture = {key = handle.key, id = handle.id, kind = item.kind}
             if item.kind == "text_field" then
-                local cursor = self:cursor_from_x(item, self.pointer_x)
-                item.editor:move_to(cursor, false)
+                item.editor:move_to(self:cursor_from_x(item, self.pointer_x), false)
             end
             self:update_hover()
             return true
         end
-        self.focused_id = nil
-        return self.layout and self.layout.modal or false
+        self.focused = nil
+        return route.consumed
+    elseif name == "wheelmoved" then
+        return self:route_at(self.pointer_x, self.pointer_y).consumed
     elseif name == "mousereleased" then
         self.pointer_x, self.pointer_y = args[1], args[2]
-        local button = args[3]
-        local capture = self.pointer_capture
-        if button == 1 and capture then
-            local item = self.layout.by_id[capture.id]
-            if item and item.kind == "button" and item.enabled and point_in(item.rect, self.pointer_x, self.pointer_y) then
-                self:queue(item.node.action, item.node.id)
-            end
-            self.pressed_id, self.pointer_capture = nil, nil
+        if self.cancelled_pointer_button == args[3] then
+            self.cancelled_pointer_button = nil
+            self.pressed = nil
             self:update_hover()
             return true
         end
-        return self.layout and self.layout.modal or false
+        local capture = self.pointer_capture
+        if args[3] == 1 and capture then
+            local entry = self.layers:get(capture.key)
+            local item = entry and entry.layout.by_id[capture.id]
+            if item and item.kind == "button" and item.enabled and point_in_item(item, self.pointer_x, self.pointer_y) then
+                self:queue(item.node.action, item.node.id, nil, entry.key)
+            end
+            self.pressed, self.pointer_capture = nil, nil
+            self:update_hover()
+            return true
+        end
+        return self:route_at(self.pointer_x, self.pointer_y).consumed
     elseif name == "keypressed" then
         local key = args[1]
         if key == "tab" then return self:focus_adjacent(self:modifiers().shift and -1 or 1) end
-        local item = self.focused_id and self.layout and self.layout.by_id[self.focused_id]
+        local owner = self:keyboard_owner()
+        local entry = self.focused and self.layers:get(self.focused.key)
+        local item = entry and owner == entry and entry.layout.by_id[self.focused.id]
         if item and item.enabled then
-            if item.kind == "text_field" then return self:field_keypressed(item, key) end
+            if item.kind == "text_field" then return self:field_keypressed(entry, item, key) end
             if item.kind == "button" and (key == "space" or key == "return" or key == "kpenter") then
-                self.pressed_id = item.node.id
-                self.keyboard_pressed_id = item.node.id
+                self.pressed = {key = entry.key, id = item.node.id}
+                self.keyboard_pressed = {key = entry.key, id = item.node.id}
                 return true
             end
         end
-        return self.layout and self.layout.modal or false
+        return owner ~= nil
     elseif name == "keyreleased" then
         local key = args[1]
-        if self.keyboard_pressed_id and (key == "space" or key == "return" or key == "kpenter") then
-            local item = self.layout and self.layout.by_id[self.keyboard_pressed_id]
-            if item and item.enabled and item.node.id == self.focused_id then self:queue(item.node.action, item.node.id) end
-            self.keyboard_pressed_id, self.pressed_id = nil, nil
+        if self.keyboard_pressed and (key == "space" or key == "return" or key == "kpenter") then
+            local entry = self.layers:get(self.keyboard_pressed.key)
+            local item = entry and entry.layout.by_id[self.keyboard_pressed.id]
+            if item and item.enabled and same_handle(self.focused, entry.key, item.node.id) then
+                self:queue(item.node.action, item.node.id, nil, entry.key)
+            end
+            self.keyboard_pressed, self.pressed = nil, nil
             return true
         end
-        return self.layout and self.layout.modal or false
+        return self:keyboard_owner() ~= nil
     elseif name == "textinput" then
-        local item = self.focused_id and self.layout and self.layout.by_id[self.focused_id]
+        local owner = self:keyboard_owner()
+        local entry = self.focused and self.layers:get(self.focused.key)
+        local item = entry and owner == entry and entry.layout.by_id[self.focused.id]
         if item and item.kind == "text_field" and item.enabled then
-            if item.editor:insert(args[1] or "") then self:emit_editor_change(item) end
+            if item.editor:insert(args[1] or "") then self:emit_editor_change(entry, item) end
             return true
         end
-        return self.layout and self.layout.modal or false
+        return owner ~= nil
     end
-    return self.layout and self.layout.modal or false
+    return false
 end
 
-function Context:rect(id)
-    local item = self.layout and self.layout.by_id[id]
-    return item and StyleSheet.copy(item.rect) or nil
+function Context:rect(id, view_key)
+    if view_key then
+        local entry = self.layers:get(view_key)
+        local item = entry and entry.layout and entry.layout.by_id[id]
+        return item and StyleSheet.copy(item.visual_rect or item.rect) or nil
+    end
+    for index = #self.layers.entries, 1, -1 do
+        local entry = self.layers.entries[index]
+        local item = entry.layout and entry.layout.by_id[id]
+        if item then return StyleSheet.copy(item.visual_rect or item.rect) end
+    end
+    return nil
 end
 
 return Context

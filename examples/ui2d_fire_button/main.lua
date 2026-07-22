@@ -98,6 +98,10 @@ function love.mousereleased(...)
     ui:event("mousereleased", ...)
 end
 
+function love.wheelmoved(...)
+    ui:event("wheelmoved", ...)
+end
+
 function love.keypressed(...)
     ui:event("keypressed", ...)
 end

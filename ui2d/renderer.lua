@@ -25,7 +25,7 @@ function Renderer.new(styles, icons)
     return setmetatable({styles = styles, icons = icons}, Renderer)
 end
 
-function Renderer:button_background(item, state, scale)
+function Renderer:button_background(item, state, scale, alpha)
     local style = item.style
     local base = color(self.styles, style.background)
     if not item.enabled then
@@ -39,7 +39,7 @@ function Renderer:button_background(item, state, scale)
         styles = self.styles,
         scale = scale,
     }) or 0
-    set_color(base)
+    set_color(base, alpha)
     love.graphics.rectangle("fill", item.rect.x, item.rect.y, item.rect.w, item.rect.h, radius, radius)
 
     local border = self.styles:color(style.border)
@@ -49,7 +49,7 @@ function Renderer:button_background(item, state, scale)
             scale = scale,
         }) or 1
         love.graphics.setLineWidth(math.max(1, border_width))
-        set_color(color(self.styles, border))
+        set_color(color(self.styles, border), alpha)
         love.graphics.rectangle("line", item.rect.x + border_width / 2, item.rect.y + border_width / 2,
             item.rect.w - border_width, item.rect.h - border_width, radius, radius)
     end
@@ -57,7 +57,7 @@ function Renderer:button_background(item, state, scale)
     if state.focused then
         local focus = color(self.styles, style.focus or style.foreground)
         local inset = math.max(2, 3 * scale)
-        set_color({focus[1], focus[2], focus[3], 0.7})
+        set_color({focus[1], focus[2], focus[3], 0.7}, alpha)
         love.graphics.setLineWidth(math.max(1, scale))
         love.graphics.rectangle("line", item.rect.x + inset, item.rect.y + inset,
             item.rect.w - inset * 2, item.rect.h - inset * 2,
@@ -65,7 +65,7 @@ function Renderer:button_background(item, state, scale)
     end
 end
 
-function Renderer:text_field(item, state, scale, time)
+function Renderer:text_field(item, state, scale, time, alpha)
     local style = item.style
     local base = color(self.styles, style.background)
     if state.focused then base = color(self.styles, style.background_focused, shifted(base, 0.04)) end
@@ -74,12 +74,12 @@ function Renderer:text_field(item, state, scale, time)
         styles = self.styles,
         scale = scale,
     }) or 0
-    set_color(base)
+    set_color(base, alpha)
     love.graphics.rectangle("fill", item.rect.x, item.rect.y, item.rect.w, item.rect.h, radius, radius)
 
     local border_value = state.focused and (style.border_focused or style.caret) or style.border
     if border_value then
-        set_color(color(self.styles, border_value))
+        set_color(color(self.styles, border_value), alpha)
         love.graphics.setLineWidth(math.max(1, scale))
         love.graphics.rectangle("line", item.rect.x + scale / 2, item.rect.y + scale / 2,
             item.rect.w - scale, item.rect.h - scale, radius, radius)
@@ -103,13 +103,14 @@ function Renderer:text_field(item, state, scale, time)
     local text_x = clip_x - scroll_x
     local text_y = item.rect.y + (item.rect.h - font:getHeight()) / 2
     local previous_x, previous_y, previous_w, previous_h = love.graphics.getScissor()
-    love.graphics.setScissor(clip_x, item.rect.y, clip_w, item.rect.h)
+    local visual_clip = item.visual_rect or item.rect
+    love.graphics.setScissor(visual_clip.x, visual_clip.y, visual_clip.w, visual_clip.h)
 
     if state.focused and item.editor:has_selection() then
         local first, last = item.editor:selection()
         local selection_x = text_x + font:getWidth(item.editor:prefix(first))
         local selection_w = font:getWidth(item.editor:prefix(last)) - font:getWidth(item.editor:prefix(first))
-        set_color(color(self.styles, style.selection))
+        set_color(color(self.styles, style.selection), alpha)
         love.graphics.rectangle("fill", selection_x, text_y, selection_w, font:getHeight())
     end
 
@@ -118,12 +119,12 @@ function Renderer:text_field(item, state, scale, time)
     local text_color = color(self.styles, foreground)
     if value == "" then text_color[4] = text_color[4] * 0.55 end
     if not item.enabled then text_color[4] = text_color[4] * 0.5 end
-    set_color(text_color)
+    set_color(text_color, alpha)
     love.graphics.print(display, math.floor(text_x + 0.5), math.floor(text_y + 0.5))
 
     if state.focused and not item.editor:has_selection() and (time % 1) < 0.5 then
         local caret_x = text_x + font:getWidth(item.editor:prefix(item.editor.cursor))
-        set_color(color(self.styles, style.caret or style.foreground))
+        set_color(color(self.styles, style.caret or style.foreground), alpha)
         love.graphics.rectangle("fill", math.floor(caret_x + 0.5), text_y, math.max(1, scale), font:getHeight())
     end
     if previous_x then
@@ -133,22 +134,33 @@ function Renderer:text_field(item, state, scale, time)
     end
 end
 
-local function draw_item(self, item, context, layout)
+local function apply_transform(spec)
+    love.graphics.translate(spec.translate_x, spec.translate_y)
+    love.graphics.translate(spec.origin_x, spec.origin_y)
+    love.graphics.rotate(spec.rotation)
+    love.graphics.scale(spec.scale_x, spec.scale_y)
+    love.graphics.translate(-spec.origin_x, -spec.origin_y)
+end
+
+local function draw_item(self, item, context, layout, entry, inherited_alpha)
+    love.graphics.push()
+    apply_transform(item.visual_transform)
+    local alpha = inherited_alpha * item.visual_opacity
     local state = {
-        hovered = context.hovered_id == item.node.id,
-        pressed = context.pressed_id == item.node.id,
-        focused = context.focused_id == item.node.id,
+        hovered = context:is_hovered(entry, item.node.id),
+        pressed = context:is_pressed(entry, item.node.id),
+        focused = context:is_focused(entry, item.node.id),
     }
-    if item.kind == "screen" and item.node.background then
-        set_color(color(self.styles, item.node.background))
+    if (item.kind == "screen" or item.kind == "panel") and item.node.background then
+        set_color(color(self.styles, item.node.background), alpha)
         love.graphics.rectangle("fill", item.rect.x, item.rect.y, item.rect.w, item.rect.h)
     elseif item.kind == "button" then
-        self:button_background(item, state, layout.scale)
+        self:button_background(item, state, layout.scale, alpha)
     elseif item.kind == "text_field" then
-        self:text_field(item, state, layout.scale, context.time)
+        self:text_field(item, state, layout.scale, context.time, alpha)
     elseif item.kind == "text" then
         love.graphics.setFont(item.font)
-        set_color(color(self.styles, item.node.color or item.text_style.color))
+        set_color(color(self.styles, item.node.color or item.text_style.color), alpha)
         local x = item.rect.x
         if item.node.align == "center" then x = item.rect.x + (item.rect.w - item.font:getWidth(item.text)) / 2
         elseif item.node.align == "right" then x = item.rect.x + item.rect.w - item.font:getWidth(item.text) end
@@ -156,18 +168,20 @@ local function draw_item(self, item, context, layout)
     elseif item.kind == "icon" then
         local tint = item.node.tint and color(self.styles, item.node.tint) or nil
         self.icons:draw(item.node.name, item.rect.x, item.rect.y, item.rect.w, item.rect.h,
-            tint, item.node.alpha or 1)
+            tint, (item.node.alpha or 1) * alpha)
     end
     for _, child in ipairs(item.children or {}) do
-        draw_item(self, child, context, layout)
+        draw_item(self, child, context, layout, entry, alpha)
     end
+    love.graphics.pop()
 end
 
-function Renderer:draw(layout, context)
+function Renderer:draw(layout, context, entry)
     if not layout then return end
     love.graphics.push("all")
     love.graphics.origin()
-    draw_item(self, layout.root, context, layout)
+    if layout.layer_visual_transform then apply_transform(layout.layer_visual_transform) end
+    draw_item(self, layout.root, context, layout, entry, layout.layer_opacity or 1)
     love.graphics.pop()
 end
 

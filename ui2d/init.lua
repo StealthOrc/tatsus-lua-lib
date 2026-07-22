@@ -14,6 +14,7 @@ local UI = {
     row = Nodes.row,
     column = Nodes.column,
     stack = Nodes.stack,
+    panel = Nodes.panel,
     text = Nodes.text,
     icon = Nodes.icon,
     spacer = Nodes.spacer,
