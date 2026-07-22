@@ -127,15 +127,37 @@ local function structural(layout, selected, direction, wrap)
 end
 
 local function center(item)
-    local rect = item.visual_rect or item.rect
+    local rect = item.rect
     return rect.x + rect.w / 2, rect.y + rect.h / 2
+end
+
+local function orthogonal_group(item, direction)
+    local ancestor = item.parent
+    while ancestor do
+        local axis = group_axis(ancestor)
+        if axis and axis ~= direction.axis then return ancestor end
+        ancestor = ancestor.parent
+    end
+    return nil
+end
+
+local function descends_from(item, ancestor)
+    local current = item.parent
+    while current do
+        if current == ancestor then return true end
+        current = current.parent
+    end
+    return false
 end
 
 local function spatial(layout, selected, direction)
     local sx, sy = center(selected)
+    local excluded_group = orthogonal_group(selected, direction)
     local best, best_score
     for _, candidate in ipairs(layout.navigable or {}) do
-        if candidate ~= selected and candidate.enabled then
+        if candidate ~= selected and candidate.enabled
+            and (not excluded_group or not descends_from(candidate, excluded_group))
+        then
             local x, y = center(candidate)
             local dx, dy = x - sx, y - sy
             local primary = dx * direction.dx + dy * direction.dy

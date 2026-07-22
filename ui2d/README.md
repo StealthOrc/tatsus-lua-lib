@@ -177,13 +177,16 @@ Captured buttons can also act as drag handles. Drag lifecycle actions include `x
 UI.button {
     id = "drawer-handle",
     label = "Drag drawer",
+    semantic_drag = {axis = "vertical", speed = 720},
     drag_started = "drawer_drag_start",
     dragged = "drawer_drag_move",
     drag_ended = "drawer_drag_end",
 }
 ```
 
-Use the continuous `dragged` values to directly control a transform while held, then retarget the same Motion Value from `drag_ended` to settle or snap the surface.
+Pointer movement drives these actions after mouse capture. A selected drag handle also starts Semantic Drag Capture when accept is held: semantic navigation vectors drive the drag continuously and are consumed instead of changing Selection until accept is released. This behavior is enabled by default for drag handles; set `semantic_drag = false` to disable it, or configure its logical-units-per-second `speed`, analog `deadzone`, and optional `horizontal`/`vertical` `axis` constraint.
+
+Use the continuous `dragged` values to directly control a transform while held, then retarget the same Motion Value from `drag_ended` to settle or snap the surface. A stationary press reports zero total distance, so callers can leave the surface unchanged rather than treating a click as a directional gesture.
 
 ## Fonts and SVG icons
 

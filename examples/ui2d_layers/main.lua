@@ -220,6 +220,7 @@ local Drawer = UI.view("drawer", function(model)
                     id = "drawer-grab-handle",
                     style = "drawer_handle",
                     label = "=  DRAG DRAWER  =",
+                    semantic_drag = {axis = "vertical", speed = 720},
                     drag_started = "drawer_drag_start",
                     dragged = "drawer_drag_move",
                     drag_ended = "drawer_drag_end",
@@ -454,7 +455,9 @@ ui = UI.new {
                 drawer_drag_origin + action.total_dy / math.max(1, love.graphics.getHeight())))
         elseif action.type == "drawer_drag_end" then
             drawer_dragging = false
-            if action.total_dy < -3 then
+            if action.cancelled then
+                drawer_progress = drawer_drag_origin
+            elseif action.total_dy < -3 then
                 drawer_progress = DRAWER_EXPANDED
             elseif action.total_dy > 3 then
                 local close = drawer_drag_origin >= DRAWER_LOWERED - 0.01
@@ -468,8 +471,7 @@ ui = UI.new {
                     drawer_progress = DRAWER_LOWERED
                 end
             else
-                drawer_progress = drawer_drag_origin < 0.335
-                    and DRAWER_LOWERED or DRAWER_EXPANDED
+                drawer_progress = drawer_drag_origin
             end
         elseif action.type == "cycle_tooltip_anchor" then
             tooltip_mode_index = tooltip_mode_index % #tooltip_modes + 1
@@ -565,6 +567,12 @@ end
 function love.gamepadreleased(joystick, button)
     if button == "a" then
         ui:input {action = "accept", phase = "released", source = gamepad_source(joystick)}
+    else
+        local direction = ({dpup = "up", dpdown = "down", dpleft = "left", dpright = "right"})[button]
+        if direction then
+            ui:input {action = "navigate", direction = direction, phase = "released",
+                source = gamepad_source(joystick)}
+        end
     end
 end
 

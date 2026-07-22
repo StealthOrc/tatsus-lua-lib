@@ -33,6 +33,32 @@ local function hold_options(node)
     return node.hold
 end
 
+local function draggable(node)
+    return node.drag_started ~= nil or node.dragged ~= nil or node.drag_ended ~= nil
+end
+
+local function semantic_drag_options(node)
+    if not draggable(node) or node.semantic_drag == false then return nil end
+    if node.semantic_drag == nil or node.semantic_drag == true then return {} end
+    assert(type(node.semantic_drag) == "table", "semantic_drag must be false, true, or an options table")
+    return node.semantic_drag
+end
+
+local function direction_vector(direction)
+    if direction == "left" then return -1, 0 end
+    if direction == "right" then return 1, 0 end
+    if direction == "up" then return 0, -1 end
+    if direction == "down" then return 0, 1 end
+    return 0, 0
+end
+
+local function apply_deadzone(value, deadzone)
+    local magnitude = math.abs(value or 0)
+    if magnitude <= deadzone then return 0 end
+    local scaled = (magnitude - deadzone) / math.max(0.001, 1 - deadzone)
+    return value < 0 and -scaled or scaled
+end
+
 local function action_value(action, source_id, extra, view_key)
     local result
     if type(action) == "string" then
@@ -102,7 +128,7 @@ function Context:show(view, options)
     self.selections = {}
     self.selection_mode = self.initial_input_mode
     self.navigation_input = {x = 0, y = 0}
-    self.pointer_capture, self.keyboard_pressed, self.hold = nil, nil, nil
+    self.pointer_capture, self.keyboard_pressed, self.hold, self.semantic_drag = nil, nil, nil, nil
     self.cancelled_pointer_button = cancelled_pointer_button
     options = StyleSheet.copy(options or {})
     if options.layer == nil then options.layer = "base" end
@@ -147,6 +173,9 @@ function Context:discard(key)
     end
     if self.keyboard_pressed and self.keyboard_pressed.key == key then self.keyboard_pressed = nil end
     if self.hold and self.hold.key == key then self:cancel_hold("layer_removed") end
+    if self.semantic_drag and self.semantic_drag.key == key then
+        self:end_semantic_drag("layer_removed")
+    end
     self:update_hover()
     return true
 end
@@ -163,6 +192,9 @@ function Context:remove(key)
         end
         if self.keyboard_pressed and self.keyboard_pressed.key == key then self.keyboard_pressed = nil end
         if self.hold and self.hold.key == key then self:cancel_hold("layer_removed") end
+        if self.semantic_drag and self.semantic_drag.key == key then
+            self:end_semantic_drag("layer_removed")
+        end
         return true
     end
     return self:discard(key)
@@ -332,9 +364,115 @@ function Context:is_holding(entry, id)
     return same_handle(self.hold, entry.key, id)
 end
 
+function Context:start_semantic_drag(entry, item, source)
+    local options = semantic_drag_options(item.node)
+    if not options then return false end
+    if self.semantic_drag then
+        if same_handle(self.semantic_drag, entry.key, item.node.id) then return true end
+        self:end_semantic_drag("replaced")
+    end
+    local rect = item.visual_rect or item.rect
+    local x, y = rect.x + rect.w / 2, rect.y + rect.h / 2
+    local deadzone = math.max(0, math.min(0.95, tonumber(options.deadzone) or 0.15))
+    local speed = math.max(0, tonumber(options.speed) or 640) * (item.layout_scale or 1)
+    local axis = options.axis
+    assert(axis == nil or axis == "horizontal" or axis == "vertical",
+        "semantic_drag axis must be horizontal or vertical")
+    self.semantic_drag = {
+        key = entry.key,
+        id = item.node.id,
+        start_x = x,
+        start_y = y,
+        last_x = x,
+        last_y = y,
+        x = x,
+        y = y,
+        input_x = 0,
+        input_y = 0,
+        speed = speed,
+        deadzone = deadzone,
+        axis = axis,
+        source = source,
+    }
+    self.navigation_input = {x = 0, y = 0}
+    self:queue(item.node.drag_started, item.node.id, {
+        x = x,
+        y = y,
+        dx = 0,
+        dy = 0,
+        total_dx = 0,
+        total_dy = 0,
+        input_source = source,
+        semantic = true,
+    }, entry.key)
+    return true
+end
+
+function Context:set_semantic_drag_input(event, source)
+    local capture = self.semantic_drag
+    if not capture then return false end
+    local value = event.value or event
+    local x, y = value.x or 0, value.y or 0
+    if event.direction then x, y = direction_vector(event.direction) end
+    if event.phase == "released" then x, y = 0, 0 end
+    x = apply_deadzone(x, capture.deadzone)
+    y = apply_deadzone(y, capture.deadzone)
+    if capture.axis == "horizontal" then y = 0
+    elseif capture.axis == "vertical" then x = 0 end
+    capture.input_x, capture.input_y = x, y
+    capture.source = source or capture.source
+    self.navigation_input = {x = x, y = y}
+    return true
+end
+
+function Context:update_semantic_drag(dt)
+    local capture = self.semantic_drag
+    if not capture then return end
+    local entry = self.layers:get(capture.key)
+    local item = entry and entry.layout and entry.layout.by_id[capture.id]
+    if not item or not item.enabled then
+        self:end_semantic_drag("unavailable")
+        self.pressed = nil
+        return
+    end
+    local dx = capture.input_x * capture.speed * math.max(0, dt or 0)
+    local dy = capture.input_y * capture.speed * math.max(0, dt or 0)
+    if dx == 0 and dy == 0 then return end
+    capture.x, capture.y = capture.x + dx, capture.y + dy
+    local values = drag_values(capture, capture.x, capture.y)
+    values.input_source = capture.source
+    values.semantic = true
+    self:queue(item.node.dragged, item.node.id, values, entry.key)
+    capture.last_x, capture.last_y = capture.x, capture.y
+end
+
+function Context:end_semantic_drag(reason)
+    local capture = self.semantic_drag
+    if not capture then return false end
+    self.semantic_drag = nil
+    local entry = self.layers:get(capture.key)
+    local item = entry and entry.layout and entry.layout.by_id[capture.id]
+    if item then
+        local values = drag_values(capture, capture.x, capture.y)
+        values.input_source = capture.source
+        values.semantic = true
+        values.reason = reason
+        values.cancelled = reason ~= nil and reason ~= "released"
+        self:queue(item.node.drag_ended, item.node.id, values, entry.key)
+    end
+    local direction = Navigation.direction(capture.input_x, capture.input_y, 0.5)
+    self.navigation_input = {
+        x = capture.input_x,
+        y = capture.input_y,
+        drag_latched = direction ~= nil,
+    }
+    return true
+end
+
 function Context:update(dt)
     self.time = self.time + (dt or 0)
     self:update_hold(dt or 0)
+    self:update_semantic_drag(dt or 0)
     local navigation_input = self.navigation_input
     if navigation_input.direction and navigation_input.repeat_at
         and self.time >= navigation_input.repeat_at
@@ -516,6 +654,12 @@ function Context:set_navigation_selection(entry, item, source)
         self:cancel_hold("input_mode_changed")
         self.pressed = nil
     end
+    if self.semantic_drag
+        and input_source_kind(self.semantic_drag.source) ~= input_source_kind(source)
+    then
+        self:end_semantic_drag("input_mode_changed")
+        self.pressed = nil
+    end
     if self.input_mode_policy == "automatic" and self.hovered then
         local hovered = self.hovered
         self.hovered = nil
@@ -542,6 +686,12 @@ function Context:set_navigation_selection(entry, item, source)
         self:cancel_hold("selection_changed")
         self.pressed = nil
     end
+    if self.semantic_drag and self.semantic_drag.key == entry.key
+        and (not item or self.semantic_drag.id ~= item.node.id)
+    then
+        self:end_semantic_drag("selection_changed")
+        self.pressed = nil
+    end
     if previous and was_active then
         local previous_item = entry.layout and entry.layout.by_id[previous.id]
         if previous_item then
@@ -565,6 +715,10 @@ function Context:use_pointer_selection()
     if self.selection_mode == "pointer" then return end
     if self.hold and input_source_kind(self.hold.source) ~= "pointer" then
         self:cancel_hold("input_mode_changed")
+        self.pressed = nil
+    end
+    if self.semantic_drag and input_source_kind(self.semantic_drag.source) ~= "pointer" then
+        self:end_semantic_drag("input_mode_changed")
         self.pressed = nil
     end
     local entry = self:navigation_owner()
@@ -650,6 +804,7 @@ function Context:activate_selection(source)
     if item.kind ~= "button" then return false end
     self.pressed = {key = entry.key, id = item.node.id}
     self.keyboard_pressed = {key = entry.key, id = item.node.id, semantic = true}
+    self:start_semantic_drag(entry, item, source)
     self:queue(item.node.press_started, item.node.id, {input_source = source}, entry.key)
     if not self:start_hold(entry, item, source) then
         self:queue(item.node.action, item.node.id, {input_source = source}, entry.key)
@@ -663,6 +818,9 @@ function Context:release_selection(source)
     local entry = self.layers:get(pressed.key)
     local item = entry and entry.layout and entry.layout.by_id[pressed.id]
     self:release_hold(pressed.key, pressed.id)
+    if same_handle(self.semantic_drag, pressed.key, pressed.id) then
+        self:end_semantic_drag("released")
+    end
     if item then self:queue(item.node.press_ended, item.node.id, {input_source = source}, entry.key) end
     self.keyboard_pressed, self.pressed = nil, nil
     return true
@@ -682,9 +840,15 @@ function Context:input(event)
 
     local value = event.value or event
     local x, y = value.x or 0, value.y or 0
+    if self.semantic_drag then return self:set_semantic_drag_input(event, source) end
     local options = self:navigation_options_for(self:navigation_owner())
     local direction = event.direction or Navigation.direction(x, y,
         event.threshold or options.threshold or 0.5)
+    if event.phase == "released" then direction = nil end
+    if self.navigation_input.drag_latched then
+        self.navigation_input = {x = x, y = y, drag_latched = direction ~= nil}
+        return true
+    end
     if event.phase == "pressed" and event.direction then
         return self:navigate(event.direction, source)
     end
@@ -753,6 +917,7 @@ function Context:event(name, ...)
         return #self.layers.entries > 0
     elseif name == "focus" and args[1] == false then
         self:cancel_hold("focus_lost")
+        self:end_semantic_drag("focus_lost")
         self.pressed, self.pointer_capture, self.keyboard_pressed = nil, nil, nil
         self.cancelled_pointer_button = nil
         return false
@@ -871,6 +1036,9 @@ function Context:event(name, ...)
         end
         if key == "tab" then return self:focus_adjacent(self:modifiers().shift and -1 or 1) end
         if key == "up" or key == "down" or key == "left" or key == "right" then
+            if self.semantic_drag then
+                return self:set_semantic_drag_input({direction = key, phase = "pressed"}, "keyboard")
+            end
             return self:navigate(key, "keyboard")
         end
         if key == "space" or key == "return" or key == "kpenter" then
@@ -879,6 +1047,15 @@ function Context:event(name, ...)
         return owner ~= nil
     elseif name == "keyreleased" then
         local key = args[1]
+        if self.semantic_drag and (key == "up" or key == "down" or key == "left" or key == "right") then
+            return self:set_semantic_drag_input({direction = key, phase = "released"}, "keyboard")
+        end
+        if self.navigation_input.drag_latched
+            and (key == "up" or key == "down" or key == "left" or key == "right")
+        then
+            self.navigation_input = {x = 0, y = 0}
+            return true
+        end
         if self.keyboard_pressed and (key == "space" or key == "return" or key == "kpenter") then
             if self.keyboard_pressed.semantic then return self:release_selection("keyboard") end
             local pressed = self.keyboard_pressed
