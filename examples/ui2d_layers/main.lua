@@ -136,7 +136,7 @@ local Menu = UI.view("menu", function()
                     opacity = 0.32,
                 },
             },
-            UI.button {id = "close-menu", style = "motion", label = "Close menu", action = "close_menu"},
+            UI.button {id = "close-menu", style = "motion", label = "B · Close menu", action = "close_menu"},
         },
     }
 end)
@@ -258,7 +258,7 @@ local Drawer = UI.view("drawer", function(model)
                         label = expanded and "Lower drawer" or "Pull drawer further up",
                         action = expanded and "close_perks" or "open_perks",
                     },
-                    UI.button {id = "close-drawer", style = "motion", label = "Close drawer", action = "close_drawer"},
+                    UI.button {id = "close-drawer", style = "motion", label = "B · Close drawer", action = "close_drawer"},
                 },
                 UI.text {value = "Shader Surfaces / Perk Draft", style = "title"},
                 UI.text {value = "These cards always live below the controls in this same view.", style = "body"},
@@ -419,6 +419,31 @@ local function show_drawer()
     })
 end
 
+local function close_drawer()
+    ui:remove("tooltip")
+    ui:remove("drawer")
+    drawer_open = false
+    drawer_dragging = false
+    drawer_close_pending = false
+end
+
+local function close_menu()
+    close_drawer()
+    ui:remove("menu")
+end
+
+local function decline_active_view()
+    if drawer_open or drawer_close_pending or ui:rect("drawer-panel", "drawer") then
+        close_drawer()
+        return true
+    end
+    if ui:rect("close-menu", "menu") then
+        close_menu()
+        return true
+    end
+    return false
+end
+
 ui = UI.new {
     styles = styles,
     shaders = {perk_fluid = "perk_fluid.glsl"},
@@ -426,19 +451,10 @@ ui = UI.new {
         if action.type == "open_menu" then
             ui:push(Menu, {key = "menu", layer = "overlay", transition = fade})
         elseif action.type == "close_menu" then
-            ui:remove("tooltip")
-            ui:remove("drawer")
-            ui:remove("menu")
-            drawer_open = false
-            drawer_dragging = false
-            drawer_close_pending = false
+            close_menu()
         elseif action.type == "toggle_drawer" then
             if drawer_open then
-                ui:remove("tooltip")
-                ui:remove("drawer")
-                drawer_open = false
-                drawer_dragging = false
-                drawer_close_pending = false
+                close_drawer()
             else
                 show_drawer()
             end
@@ -449,11 +465,7 @@ ui = UI.new {
             drawer_dragging = false
             drawer_close_pending = false
         elseif action.type == "close_drawer" then
-            ui:remove("tooltip")
-            ui:remove("drawer")
-            drawer_open = false
-            drawer_dragging = false
-            drawer_close_pending = false
+            close_drawer()
         elseif action.type == "open_perks" then
             ui:remove("tooltip")
             drawer_dragging = false
@@ -588,6 +600,8 @@ end
 function love.gamepadpressed(joystick, button)
     if button == "a" then
         ui:input {action = "accept", phase = "pressed", source = gamepad_source(joystick)}
+    elseif button == "b" then
+        decline_active_view()
     else
         local direction = ({dpup = "up", dpdown = "down", dpleft = "left", dpright = "right"})[button]
         if direction then

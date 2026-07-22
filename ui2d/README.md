@@ -366,4 +366,4 @@ The UI in Motion example exercises full-screen blocking, a partial pass-through 
 
 Set `UI2D_DEMO_PERKS=1` before launching to open the example directly with the single drawer fully raised.
 
-The example also forwards a small handwritten controller adapter directly into `ui:input`: D-pad or left stick navigates, and the standardized lower face button accepts. It intentionally does not require the independent `input` bindings module.
+The example also forwards a small handwritten controller adapter directly into `ui:input`: D-pad or left stick navigates, the standardized lower face button accepts, and B invokes the same contextual close actions as the drawer and menu buttons. It intentionally does not require the independent `input` bindings module.
