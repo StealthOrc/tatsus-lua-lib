@@ -19,6 +19,12 @@ local tooltip_mode_index = 1
 local tooltip_animate_until = 0
 local gamepad_axes = {}
 
+local function active_tooltip_mode()
+    local mode = tooltip_modes[tooltip_mode_index]
+    if mode == "pointer" and ui and ui:input_mode() ~= "pointer" then return "button" end
+    return mode
+end
+
 local styles = UI.StyleSheet {
     viewport = {reference_width = 960, reference_height = 640, min_scale = 0.75, max_scale = 2},
     colors = {
@@ -214,7 +220,9 @@ local Drawer = UI.view("drawer", function(model)
                     UI.button {
                         id = "tooltip-term",
                         style = "motion",
-                        label = "Tooltip: " .. tooltip_modes[tooltip_mode_index],
+                        label = "Tooltip: " .. tooltip_modes[tooltip_mode_index]
+                            .. (tooltip_modes[tooltip_mode_index] == "pointer"
+                                and active_tooltip_mode() == "button" and " (selection)" or ""),
                         action = "cycle_tooltip_anchor",
                         hover_enter = "show_tooltip",
                         hover_leave = "hide_tooltip",
@@ -359,7 +367,7 @@ local function tooltip_model()
     local pointer_x, pointer_y = ui:pointer()
     local viewport_w, viewport_h = ui:viewport()
     return {
-        mode = tooltip_modes[tooltip_mode_index],
+        mode = active_tooltip_mode(),
         pointer_x = pointer_x,
         pointer_y = pointer_y,
         viewport_w = viewport_w,

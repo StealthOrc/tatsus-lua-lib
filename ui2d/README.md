@@ -239,6 +239,10 @@ ui:input {action = "accept", phase = "pressed", source = {kind = "gamepad"}}
 ui:input {action = "accept", phase = "released", source = {kind = "gamepad"}}
 ```
 
+The default `input_mode = "automatic"` treats the most recently intentional source as authoritative. Controller or keyboard navigation suspends mouse hover and ignores pointer presses until the mouse actually moves; that movement switches back to pointer mode and refreshes hover at the new position. `ui:input_mode()` reports `pointer`, `keyboard`, `gamepad`, or another semantic source kind, allowing pointer-anchored UI such as tooltips to fall back to the selected node while the controller is active.
+
+Use `UI.new {input_mode = "simultaneous"}` when an interface intentionally wants retained mouse hover and controller Selection to remain active together. `initial_input_mode` may override the default initial `pointer` mode.
+
 Rows and columns infer horizontal and vertical Navigation Groups. Movement within a list follows its children; movement between compatible sibling lists preserves the selected ordinal. Disabled controls and nodes with `navigation = false` are skipped. Analog navigation applies a dead zone, dominant-axis selection, initial repeat delay, and repeat interval.
 
 Automatic behavior can be adjusted at the context, View Layer, root, container, or node:

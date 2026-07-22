@@ -54,6 +54,10 @@ end
 
 function Context.new(config)
     config = config or {}
+    local input_mode_policy = config.input_mode or "automatic"
+    assert(input_mode_policy == "automatic" or input_mode_policy == "simultaneous",
+        "ui2d input_mode must be automatic or simultaneous")
+    local initial_input_mode = config.initial_input_mode or "pointer"
     local styles = config.styles
     if getmetatable(styles) ~= StyleSheet then styles = StyleSheet.new(styles or {}) end
     local icons = Svg.Cache.new(config.icons)
@@ -75,8 +79,10 @@ function Context.new(config)
         pointer_x = 0,
         pointer_y = 0,
         selections = {},
-        selection_mode = "navigation",
+        selection_mode = initial_input_mode,
         navigation_input = {x = 0, y = 0},
+        input_mode_policy = input_mode_policy,
+        initial_input_mode = initial_input_mode,
     }, Context)
 end
 
@@ -87,7 +93,7 @@ function Context:show(view, options)
     self.editors = {}
     self.hovered, self.pressed, self.focused = nil, nil, nil
     self.selections = {}
-    self.selection_mode = "navigation"
+    self.selection_mode = self.initial_input_mode
     self.navigation_input = {x = 0, y = 0}
     self.pointer_capture, self.keyboard_pressed = nil, nil
     self.cancelled_pointer_button = cancelled_pointer_button
@@ -289,6 +295,16 @@ function Context:item_at(x, y)
 end
 
 function Context:update_hover()
+    if self.input_mode_policy == "automatic" and self.selection_mode ~= "pointer" then
+        if self.hovered then
+            local previous = self.hovered
+            self.hovered = nil
+            local entry = self.layers:get(previous.key)
+            local item = entry and entry.layout and entry.layout.by_id[previous.id]
+            if item then self:queue(item.node.hover_leave, previous.id, nil, previous.key) end
+        end
+        return
+    end
     local route = self:route_at(self.pointer_x, self.pointer_y)
     local item = route.item
     local next_hovered = item and item.enabled and {key = route.entry.key, id = item.node.id} or nil
@@ -312,6 +328,7 @@ function Context:update_hover()
 end
 
 function Context:is_hovered(entry, id)
+    if self.input_mode_policy == "automatic" and self.selection_mode ~= "pointer" then return false end
     return same_handle(self.hovered, entry.key, id)
 end
 
@@ -396,6 +413,17 @@ function Context:set_navigation_selection(entry, item, source)
     if not entry then return false end
     local previous = self.selections[entry.key]
     local was_active = self.selection_mode ~= "pointer"
+    if self.input_mode_policy == "automatic" and self.hovered then
+        local hovered = self.hovered
+        self.hovered = nil
+        local hovered_entry = self.layers:get(hovered.key)
+        local hovered_item = hovered_entry and hovered_entry.layout
+            and hovered_entry.layout.by_id[hovered.id]
+        if hovered_item then
+            self:queue(hovered_item.node.hover_leave, hovered.id,
+                {input_source = source}, hovered.key)
+        end
+    end
     if previous and item and previous.id == item.node.id then
         previous.source = source or previous.source
         self.selection_mode = input_source_kind(source or self.selection_mode)
@@ -454,6 +482,10 @@ function Context:selected()
     if not handle then return nil end
     return {id = handle.id, view = handle.key,
         source = self.selection_mode == "pointer" and "pointer" or handle.source or self.selection_mode}
+end
+
+function Context:input_mode()
+    return self.selection_mode
 end
 
 function Context:navigate(direction, source)
@@ -629,6 +661,9 @@ function Context:event(name, ...)
         return self.pointer_capture ~= nil or self:route_at(self.pointer_x, self.pointer_y).consumed
     elseif name == "mousepressed" then
         self.pointer_x, self.pointer_y = args[1], args[2]
+        if self.input_mode_policy == "automatic" and self.selection_mode ~= "pointer" then
+            return self:route_at(self.pointer_x, self.pointer_y).consumed
+        end
         self:use_pointer_selection()
         if self.cancelled_pointer_button == args[3] then self.cancelled_pointer_button = nil end
         local route = self:route_at(self.pointer_x, self.pointer_y)
