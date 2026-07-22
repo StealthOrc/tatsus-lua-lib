@@ -6,7 +6,10 @@ local smoke = os.getenv("UI2D_SMOKE") == "1"
 local demo_perks = os.getenv("UI2D_DEMO_PERKS") == "1"
 local smoke_finished = false
 local ui
-local drawer_expanded = false
+local drawer_open = false
+local drawer_progress = 0.67
+local drawer_dragging = false
+local drawer_drag_origin = 0.67
 
 local styles = UI.StyleSheet {
     viewport = {reference_width = 960, reference_height = 640, min_scale = 0.75, max_scale = 2},
@@ -29,6 +32,7 @@ local styles = UI.StyleSheet {
         card_title = {font = "default", size = 22, color = "card_light"},
         card_body = {font = "default", size = 14, color = "card_muted"},
         paper_title = {font = "default", size = 22, color = "ink"},
+        paper_title_inverse = {font = "default", size = 22, color = "parchment"},
         paper_body = {font = "default", size = 14, color = "ink"},
     },
     buttons = {
@@ -48,6 +52,18 @@ local styles = UI.StyleSheet {
             transition = {
                 transform = {duration = 0.16, ease = "out_cubic"},
             },
+        },
+        drawer_handle = {
+            background = "tooltip",
+            background_hovered = {0.20, 0.23, 0.32, 1},
+            background_pressed = {0.26, 0.29, 0.38, 1},
+            foreground = "white",
+            min_width = 168,
+            min_height = 26,
+            padding_x = 18,
+            padding_y = 3,
+            radius = 13,
+            text = "card_body",
         },
     },
 }
@@ -76,7 +92,12 @@ local Menu = UI.view("menu", function()
             gap = 18,
             UI.text {value = "Blocking View Layer", style = "title"},
             UI.text {value = "Nothing behind this view receives input.", style = "body"},
-            UI.button {id = "open-drawer", style = "motion", label = "Open lower drawer", action = "open_drawer"},
+            UI.button {
+                id = "toggle-drawer",
+                style = "motion",
+                label = drawer_open and "Close lower drawer" or "Open lower drawer",
+                action = "toggle_drawer",
+            },
             UI.button {id = "close-menu", style = "motion", label = "Close menu", action = "close_menu"},
         },
     }
@@ -96,34 +117,19 @@ end
 
 local function card(spec)
     local shader = spec.shader
-    local icon = UI.icon {
-        name = "perk_gem",
-        size = 52,
-        tint = shader and "white" or "parchment_border",
-        shader = spec.content_shader,
-    }
     local title = UI.text {
         anchor = "center",
         value = spec.title,
-        style = shader and "card_title" or "paper_title",
+        style = shader and "card_title" or "paper_title_inverse",
         shader = spec.title_shader,
     }
-    if shader then
-        icon = UI.panel {
-            width = 64,
-            height = 64,
-            radius = 32,
-            background = "world",
-            icon,
-        }
-        title = UI.panel {
-            width = 196,
-            height = 34,
-            radius = 5,
-            background = "world",
-            title,
-        }
-    end
+    title = UI.panel {
+        width = 196,
+        height = 34,
+        radius = 5,
+        background = shader and "world" or "parchment_border",
+        title,
+    }
     return UI.panel {
         width = 238,
         height = 292,
@@ -136,8 +142,7 @@ local function card(spec)
         UI.column {
             anchor = "center",
             align = "center",
-            gap = 10,
-            icon,
+            gap = 14,
             title,
             UI.text {value = spec.rarity, style = shader and "card_body" or "paper_body"},
             UI.spacer {height = 4},
@@ -150,7 +155,8 @@ local function card(spec)
 end
 
 local Drawer = UI.view("drawer", function(model)
-    local expanded = model.expanded == true
+    local progress = math.max(0, math.min(0.67, model.progress or 0.67))
+    local expanded = progress < 0.335
     local prismatic = fluid(17, false)
     local cursed = fluid(117, true)
     return UI.screen {
@@ -163,15 +169,24 @@ local Drawer = UI.view("drawer", function(model)
             background = "panel",
             border = "accent",
             border_width = 2,
-            transform = {translate_y = expanded and 0 or UI.percent(0.67)},
+            transform = {translate_y = UI.percent(progress)},
             transition = {
-                transform = {duration = 0.38, ease = "out_cubic"},
+                transform = {duration = model.dragging and 0 or 0.38, ease = "out_cubic"},
             },
             UI.column {
                 anchor = "top-center",
                 width = "fill",
                 align = "center",
                 gap = 12,
+                UI.button {
+                    id = "drawer-grab-handle",
+                    style = "drawer_handle",
+                    label = "=  DRAG DRAWER  =",
+                    action = expanded and "close_perks" or "open_perks",
+                    drag_started = "drawer_drag_start",
+                    dragged = "drawer_drag_move",
+                    drag_ended = "drawer_drag_end",
+                },
                 UI.text {value = "This panel blocks only the part currently visible.", style = "body"},
                 UI.row {
                     width = "fill",
@@ -213,10 +228,9 @@ local Drawer = UI.view("drawer", function(model)
                         background = "white",
                         border = "white",
                         shader = prismatic,
-                        content_shader = fluid(61, false, 0.52),
                         title_shader = fluid(61, false, 0.52),
-                        line_one = "The card, border, icon,",
-                        line_two = "and title are shaderable.",
+                        line_one = "The card, border, and title",
+                        line_two = "use separate shader surfaces.",
                         effect = "+2 all stats",
                     },
                     card {
@@ -225,7 +239,6 @@ local Drawer = UI.view("drawer", function(model)
                         background = "white",
                         border = "white",
                         shader = cursed,
-                        content_shader = fluid(161, true, 0.52),
                         title_shader = fluid(161, true, 0.52),
                         line_one = "Great power, paid for",
                         line_two = "whenever you are hit.",
@@ -269,9 +282,25 @@ local slide = {
     ease = "out_cubic",
 }
 
+local function drawer_model()
+    return {progress = drawer_progress, dragging = drawer_dragging}
+end
+
+local function show_drawer()
+    drawer_open = true
+    drawer_progress = 0.67
+    drawer_dragging = false
+    ui:push(Drawer, {
+        key = "drawer",
+        layer = "popover",
+        pointer = "pass",
+        transition = slide,
+        model = drawer_model,
+    })
+end
+
 ui = UI.new {
     styles = styles,
-    icons = {perk_gem = "perk-gem.svg"},
     shaders = {perk_fluid = "perk_fluid.glsl"},
     dispatch = function(action)
         if action.type == "open_menu" then
@@ -280,25 +309,45 @@ ui = UI.new {
             ui:remove("tooltip")
             ui:remove("drawer")
             ui:remove("menu")
-            drawer_expanded = false
-        elseif action.type == "open_drawer" then
-            drawer_expanded = false
-            ui:push(Drawer, {
-                key = "drawer",
-                layer = "popover",
-                pointer = "pass",
-                transition = slide,
-                model = function() return {expanded = drawer_expanded} end,
-            })
+            drawer_open = false
+            drawer_dragging = false
+        elseif action.type == "toggle_drawer" then
+            if drawer_open then
+                ui:remove("tooltip")
+                ui:remove("drawer")
+                drawer_open = false
+                drawer_dragging = false
+            else
+                show_drawer()
+            end
         elseif action.type == "close_drawer" then
             ui:remove("tooltip")
             ui:remove("drawer")
-            drawer_expanded = false
+            drawer_open = false
+            drawer_dragging = false
         elseif action.type == "open_perks" then
             ui:remove("tooltip")
-            drawer_expanded = true
+            drawer_dragging = false
+            drawer_progress = 0
         elseif action.type == "close_perks" then
-            drawer_expanded = false
+            drawer_dragging = false
+            drawer_progress = 0.67
+        elseif action.type == "drawer_drag_start" then
+            ui:remove("tooltip")
+            drawer_drag_origin = drawer_progress
+            drawer_dragging = true
+        elseif action.type == "drawer_drag_move" then
+            drawer_progress = math.max(0, math.min(0.67,
+                drawer_drag_origin + action.total_dy / math.max(1, love.graphics.getHeight())))
+        elseif action.type == "drawer_drag_end" then
+            drawer_dragging = false
+            if action.total_dy < -3 then
+                drawer_progress = 0
+            elseif action.total_dy > 3 then
+                drawer_progress = 0.67
+            else
+                drawer_progress = drawer_progress < 0.335 and 0 or 0.67
+            end
         elseif action.type == "show_tooltip" then
             ui:push(Tooltip, {
                 key = "tooltip",
@@ -316,13 +365,14 @@ ui = UI.new {
 function love.load()
     ui:show(Hud, {key = "hud", layer = "base", pointer = "pass", keyboard = "pass"})
     if smoke or demo_perks then
-        drawer_expanded = true
+        drawer_open = true
+        drawer_progress = 0
         ui:push(Menu, {key = "menu", layer = "overlay"})
         ui:push(Drawer, {
             key = "drawer",
             layer = "popover",
             pointer = "pass",
-            model = function() return {expanded = drawer_expanded} end,
+            model = drawer_model,
         })
     end
     ui:update(0)

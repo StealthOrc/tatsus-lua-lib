@@ -168,6 +168,21 @@ ui:push(DrawerView, {
 })
 ```
 
+Captured buttons can also act as drag handles. Drag lifecycle actions include `x`, `y`, per-event `dx`/`dy`, and press-relative `total_dx`/`total_dy`. Moving at least three pixels suppresses the normal click action; a stationary click still activates it.
+
+```lua
+UI.button {
+    id = "drawer-handle",
+    label = "Drag drawer",
+    action = "toggle_drawer",
+    drag_started = "drawer_drag_start",
+    dragged = "drawer_drag_move",
+    drag_ended = "drawer_drag_end",
+}
+```
+
+Use the continuous `dragged` values to directly control a transform while held, then retarget the same Motion Value from `drag_ended` to settle or snap the surface.
+
 ## Fonts and SVG icons
 
 Font families map weights to LÖVE-readable font files. A text style selects a family, weight, and logical size:
