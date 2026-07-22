@@ -82,7 +82,16 @@ local Hud = UI.view("hud", function()
     return UI.screen {
         background = "world",
         padding = 28,
-        UI.text {value = "Game world / pass-through HUD", style = "body", anchor = "top-left"},
+        UI.column {
+            anchor = "center",
+            align = "center",
+            gap = 12,
+            UI.text {value = "Layers in Motion", style = "title"},
+            UI.text {
+                value = "Try me with a mouse or gamepad — click below or press accept.",
+                style = "body",
+            },
+        },
         UI.button {
             id = "open-menu",
             anchor = "bottom-center",
@@ -209,6 +218,8 @@ local Drawer = UI.view("drawer", function(model)
                         action = "cycle_tooltip_anchor",
                         hover_enter = "show_tooltip",
                         hover_leave = "hide_tooltip",
+                        select_enter = "show_tooltip",
+                        select_leave = "hide_tooltip",
                     },
                     UI.button {
                         id = "toggle-perks",
@@ -453,7 +464,13 @@ ui = UI.new {
 }
 
 function love.load()
-    ui:show(Hud, {key = "hud", layer = "base", pointer = "pass", keyboard = "pass"})
+    ui:show(Hud, {
+        key = "hud",
+        layer = "base",
+        pointer = "pass",
+        keyboard = "pass",
+        navigation = "block",
+    })
     if smoke or demo_perks then
         drawer_open = true
         drawer_progress = DRAWER_EXPANDED

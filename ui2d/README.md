@@ -255,7 +255,7 @@ UI.column {
 }
 ```
 
-A `resolve(request)` function may return a target ID, `false` to stop movement, or `nil` to retain automatic behavior. Set `mode = "manual"` for full control. `ui:select(id, view_key)` selects programmatically and `ui:selected()` returns the active `{id, view, source}`. View Layers block navigation by default; `navigation = "pass"` lets lower layers retain ownership, and `keyboard = "pass"` implies the same policy unless navigation is configured explicitly.
+A `resolve(request)` function may return a target ID, `false` to stop movement, or `nil` to retain automatic behavior. Set `mode = "manual"` for full control. `ui:select(id, view_key)` selects programmatically and `ui:selected()` returns the active `{id, view, source}`. View Layers block navigation by default; `navigation = "pass"` lets lower layers retain ownership. `keyboard = "pass"` implies navigation pass-through unless the layer explicitly uses `navigation = "block"`, allowing controller selection and raw keyboard routing to remain independent.
 
 ## Shader surfaces
 

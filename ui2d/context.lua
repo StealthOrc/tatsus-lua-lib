@@ -395,12 +395,17 @@ end
 function Context:set_navigation_selection(entry, item, source)
     if not entry then return false end
     local previous = self.selections[entry.key]
+    local was_active = self.selection_mode ~= "pointer"
     if previous and item and previous.id == item.node.id then
         previous.source = source or previous.source
         self.selection_mode = input_source_kind(source or self.selection_mode)
+        if not was_active then
+            self:queue(item.node.select_enter, item.node.id,
+                {selection_source = source}, entry.key)
+        end
         return true
     end
-    if previous then
+    if previous and was_active then
         local previous_item = entry.layout and entry.layout.by_id[previous.id]
         if previous_item then
             self:queue(previous_item.node.select_leave, previous.id,
@@ -417,6 +422,18 @@ function Context:set_navigation_selection(entry, item, source)
             {selection_source = source}, entry.key)
     end
     return item ~= nil
+end
+
+function Context:use_pointer_selection()
+    if self.selection_mode == "pointer" then return end
+    local entry = self:navigation_owner()
+    local selection = self:navigation_selection(entry)
+    local item = selection and entry and entry.layout and entry.layout.by_id[selection.id]
+    if item then
+        self:queue(item.node.select_leave, item.node.id,
+            {selection_source = "pointer"}, entry.key)
+    end
+    self.selection_mode = "pointer"
 end
 
 function Context:select(id, view_key, source)
@@ -452,7 +469,9 @@ function Context:navigate(direction, source)
         selected = selection and selection.id or nil,
     }
     local target = Navigation.move(layout, selection and selection.id, direction, options, request)
-    return target and self:set_navigation_selection(entry, target, source or "navigation") or false
+    if target then return self:set_navigation_selection(entry, target, source or "navigation") end
+    local current = selection and layout.by_id[selection.id]
+    return current and self:set_navigation_selection(entry, current, source or "navigation") or false
 end
 
 function Context:focus_adjacent(direction)
@@ -478,7 +497,7 @@ function Context:activate_selection(source)
     local selection = self:navigation_selection(entry)
     local item = selection and entry and entry.layout and entry.layout.by_id[selection.id]
     if not item or not item.enabled then return false end
-    self.selection_mode = input_source_kind(source)
+    self:set_navigation_selection(entry, item, source)
     if item.kind == "text_field" then
         self.focused = {key = entry.key, id = item.node.id}
         return true
@@ -590,7 +609,7 @@ function Context:event(name, ...)
         return false
     elseif name == "mousemoved" then
         self.pointer_x, self.pointer_y = args[1], args[2]
-        self.selection_mode = "pointer"
+        self:use_pointer_selection()
         local capture = self.pointer_capture
         if capture then
             local entry = self.layers:get(capture.key)
@@ -610,7 +629,7 @@ function Context:event(name, ...)
         return self.pointer_capture ~= nil or self:route_at(self.pointer_x, self.pointer_y).consumed
     elseif name == "mousepressed" then
         self.pointer_x, self.pointer_y = args[1], args[2]
-        self.selection_mode = "pointer"
+        self:use_pointer_selection()
         if self.cancelled_pointer_button == args[3] then self.cancelled_pointer_button = nil end
         local route = self:route_at(self.pointer_x, self.pointer_y)
         local item = route.item

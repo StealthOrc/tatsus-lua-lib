@@ -36,8 +36,8 @@ function LayerStack:push(view, options)
     assert(not self.by_key[key], "duplicate View Layer key: " .. key)
     self.sequence = self.sequence + 1
     local navigation = options.navigation
-    local navigation_policy = navigation == "pass" and "pass"
-        or (navigation == false and "pass" or nil)
+    local navigation_policy = (navigation == "pass" or navigation == false) and "pass"
+        or ((navigation == "block" or type(navigation) == "table") and "block" or nil)
     if navigation_policy == nil then
         navigation_policy = options.keyboard == "pass" and "pass" or "block"
     end
