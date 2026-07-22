@@ -352,12 +352,6 @@ UI.panel {
 
 Content shaders should preserve source alpha when drawing fonts or SVGs—for example, by multiplying the result alpha by `Texel(tex, texture_coords).a`.
 
-Run the example from the repository root:
-
-```powershell
-& "C:\Program Files\LOVE\lovec.exe" --console examples\ui2d_fire_button
-```
-
 The UI in Motion example exercises full-screen blocking, a partial pass-through drawer that can tween the same panel to full-screen, a tooltip Hit Blocker, shadered perk-card surfaces, flex layout, hover transitions, and reversible View Layer transitions:
 
 ```powershell
