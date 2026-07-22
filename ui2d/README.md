@@ -198,14 +198,50 @@ SVG files are registered by semantic name in `UI.new {icons = {...}}` and used w
 
 Buttons activate on release over the same captured button and support Tab focus plus Space/Enter activation. Text fields support UTF-8 cursor positions, pointer selection, clipboard shortcuts, word deletion, Home/End, and declarative change/submit actions.
 
+## Shader surfaces
+
+Register LÖVE pixel shaders by semantic name, then assign them independently to a node's `background`, `border`, or `content` surface. A `shader` shorthand targets the node's primary surface: content for text and icons, background for panels, buttons, and text fields.
+
+```lua
+local fluid = {
+    name = "perk_fluid",
+    uniforms = {
+        seed = 17,
+        cursed = 0,
+        hex_radius = function(environment)
+            local rect = environment.item.visual_rect
+            return math.max(2.2, math.min(3.6, math.min(rect.w, rect.h) * 0.0525))
+        end,
+    },
+}
+
+local ui = UI.new {
+    shaders = {perk_fluid = "shaders/perk_fluid.glsl"},
+}
+
+UI.panel {
+    background = "white",
+    border = "white",
+    shaders = {background = fluid, border = fluid},
+    UI.icon {name = "perk", shader = fluid},
+    UI.text {value = "Prismatic", shader = fluid},
+}
+```
+
+`time`, `rect_origin`, `rect_size`, `viewport_size`, and `opacity` are sent automatically when the shader declares matching uniforms. Explicit uniform values can be constants or functions of the drawing environment. A container's `content` shader is inherited by its descendants unless a child overrides it. Shader state is scoped to one surface and restored afterward, so shadered and ordinary UI can be freely composed.
+
+Content shaders should preserve source alpha when drawing fonts or SVGs—for example, by multiplying the result alpha by `Texel(tex, texture_coords).a`.
+
 Run the example from the repository root:
 
 ```powershell
 & "C:\Program Files\LOVE\lovec.exe" --console examples\ui2d_fire_button
 ```
 
-The layered, animated example exercises full-screen blocking, a partial pass-through drawer, a tooltip Hit Blocker, flex layout, hover transitions, and reversible View Layer transitions:
+The layered, animated example exercises full-screen blocking, a partial pass-through drawer that can tween the same panel to full-screen, a tooltip Hit Blocker, shadered perk-card surfaces, flex layout, hover transitions, and reversible View Layer transitions:
 
 ```powershell
 & "C:\Program Files\LOVE\lovec.exe" --console examples\ui2d_layers
 ```
+
+Set `UI2D_DEMO_PERKS=1` before launching to open the example directly with the single drawer fully raised.

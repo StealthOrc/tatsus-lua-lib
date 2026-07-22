@@ -7,6 +7,7 @@ local Renderer = require("ui2d.renderer")
 local LayerStack = require("ui2d.layer_stack")
 local Transform = require("ui2d.transform")
 local Motion = require("ui2d.motion")
+local Shader = require("ui2d.shader")
 
 local Context = {}
 Context.__index = Context
@@ -39,11 +40,13 @@ function Context.new(config)
     local styles = config.styles
     if getmetatable(styles) ~= StyleSheet then styles = StyleSheet.new(styles or {}) end
     local icons = Svg.Cache.new(config.icons)
+    local shaders = Shader.Cache.new(config.shaders)
     return setmetatable({
         styles = styles,
         icons = icons,
+        shaders = shaders,
         fonts = FontCache.new(styles),
-        renderer = Renderer.new(styles, icons),
+        renderer = Renderer.new(styles, icons, shaders),
         dispatch = config.dispatch,
         layers = LayerStack.new(config.layers),
         motion = Motion.new(),
@@ -79,6 +82,10 @@ function Context:push(view, options)
         existing.view = view
         existing.model = options.model or existing.model
         self.motion:enter_layer(existing)
+        return existing.key
+    elseif existing then
+        existing.view = view
+        if options.model ~= nil then existing.model = options.model end
         return existing.key
     end
     local entry = self.layers:push(view, options)
