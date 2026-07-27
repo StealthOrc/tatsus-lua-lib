@@ -4,6 +4,8 @@ local HudView = require("views.hud")
 local MenuView = require("views.menu")
 local DrawerView = require("views.drawer")
 local TooltipView = require("views.tooltip")
+local LabView = require("views.lab")
+local LabModalView = require("views.lab_modal")
 
 local App = {}
 App.__index = App
@@ -48,6 +50,31 @@ local function gamepad_source(joystick)
     return {kind = "gamepad", id = joystick:getID()}
 end
 
+local function demo_sprite_sheet()
+    local canvas = love.graphics.newCanvas(192, 64)
+    canvas:setFilter("nearest", "nearest")
+    love.graphics.push("all")
+    love.graphics.setCanvas(canvas)
+    love.graphics.clear(0, 0, 0, 0)
+    local colors = {
+        {0.95, 0.31, 0.23, 1},
+        {0.31, 0.72, 1, 1},
+        {0.72, 0.32, 0.96, 1},
+    }
+    for index, color in ipairs(colors) do
+        local x = (index - 1) * 64 + 32
+        love.graphics.setColor(color)
+        love.graphics.circle("fill", x, 32, 25)
+        love.graphics.setColor(1, 1, 1, 0.92)
+        love.graphics.circle("line", x, 32, 20 - index * 2)
+        love.graphics.line(x - 12, 32, x + 12, 32)
+        love.graphics.line(x, 20, x, 44)
+    end
+    love.graphics.setCanvas()
+    love.graphics.pop()
+    return canvas
+end
+
 function App.new()
     local self = setmetatable({
         smoke = os.getenv("UI2D_SMOKE") == "1",
@@ -64,10 +91,23 @@ function App.new()
         tooltip_animate_until = 0,
         menu_title = "Blocking View Layer",
         gamepad_axes = {},
+        demo_energy = 0.65,
+        demo_resolution = "1920x1080",
+        tooltip_placement = "right",
+        sprite_frame = 1,
+        sprite_elapsed = 0,
     }, App)
 
     self.ui = UI.new {
         styles = Styles,
+        images = {
+            demo_sprite = {
+                image = demo_sprite_sheet(),
+                frame_width = 64,
+                frame_height = 64,
+                filter = "nearest",
+            },
+        },
         shaders = {perk_fluid = "perk_fluid.glsl"},
         dispatch = function(action) self:dispatch(action) end,
     }
@@ -107,6 +147,11 @@ function App:load()
                 styles = tooltip_instance_styles,
                 model = function() return self:tooltip_model() end,
             })
+            self.ui:push(LabView, {
+                key = "lab",
+                layer = "overlay",
+                model = function() return self:lab_model() end,
+            })
         end
     end
 
@@ -114,6 +159,11 @@ function App:load()
 end
 
 function App:update(dt)
+    self.sprite_elapsed = self.sprite_elapsed + dt
+    if self.sprite_elapsed >= 0.4 then
+        self.sprite_elapsed = self.sprite_elapsed - 0.4
+        self.sprite_frame = self.sprite_frame % 3 + 1
+    end
     self.ui:update(dt)
     if self.drawer_close_pending and love.timer.getTime() >= self.drawer_close_at then
         self.drawer_close_pending = false
@@ -230,6 +280,24 @@ function App:tooltip_model()
     }
 end
 
+function App:lab_model()
+    return {
+        energy = self.demo_energy,
+        resolution = self.demo_resolution,
+        tooltip_placement = self.tooltip_placement,
+        sprite_frame = self.sprite_frame,
+    }
+end
+
+function App:show_lab()
+    self.ui:push(LabView, {
+        key = "lab",
+        layer = "overlay",
+        transition = fade,
+        model = function() return self:lab_model() end,
+    })
+end
+
 function App:show_drawer()
     self.drawer_open = true
     self.drawer_progress = DRAWER_LOWERED
@@ -259,6 +327,14 @@ function App:close_menu()
 end
 
 function App:decline_active_view()
+    if self.ui:rect("lab-modal", "lab-modal") then
+        self.ui:remove("lab-modal")
+        return true
+    end
+    if self.ui:rect("close-lab", "lab") then
+        self.ui:remove("lab")
+        return true
+    end
     if self.drawer_open or self.drawer_close_pending or self.ui:rect("drawer-panel", "drawer") then
         self:close_drawer()
         return true
@@ -271,7 +347,25 @@ function App:decline_active_view()
 end
 
 function App:dispatch(action)
-    if action.type == "open_menu" then
+    if action.type == "open_lab" then
+        self:show_lab()
+    elseif action.type == "close_lab" then
+        self.ui:remove("lab")
+    elseif action.type == "open_lab_modal" then
+        self.ui:push(LabModalView, {
+            key = "lab-modal",
+            layer = "popover",
+            transition = fade,
+        })
+    elseif action.type == "close_lab_modal" then
+        self.ui:remove("lab-modal")
+    elseif action.type == "set_demo_energy" then
+        self.demo_energy = action.value
+    elseif action.type == "set_demo_resolution" then
+        self.demo_resolution = action.value
+    elseif action.type == "set_tooltip_placement" then
+        self.tooltip_placement = action.value
+    elseif action.type == "open_menu" then
         self.ui:push(MenuView, {
             key = "menu",
             layer = "overlay",

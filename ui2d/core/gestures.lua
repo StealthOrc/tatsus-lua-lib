@@ -4,7 +4,17 @@ local Transform = require("ui2d.core.transform")
 local Gestures = {}
 
 function Gestures.point_in_item(item, x, y)
-    return item and Transform.contains(item.world_transform, item.rect, x, y)
+    if not item then return false end
+    local clip = item.clip_rect
+    if clip and (
+        x < clip.x
+            or x > clip.x + clip.w
+            or y < clip.y
+            or y > clip.y + clip.h
+    ) then
+        return false
+    end
+    return Transform.contains(item.world_transform, item.rect, x, y)
 end
 
 function Gestures.hold_options(node)

@@ -1,6 +1,6 @@
 # ui2d
 
-`ui2d` is a declarative, resolution-independent UI library for LÖVE 11.x. Views describe intent; the runtime owns measurement, layout, font and SVG caching, pointer/keyboard state, and rendering.
+`ui2d` is a declarative, resolution-independent UI library for LÖVE 11.x. Views describe intent; the runtime owns measurement, layout, font and media caching, pointer/keyboard/controller state, and rendering.
 
 ## Units
 
@@ -76,6 +76,10 @@ ui:show(view, {model = function() return {can_fire = true} end})
 Forward LÖVE callbacks with `ui:event(name, ...)`, call `ui:update(dt)` before `ui:draw()`, and use the boolean event result when UI consumption should prevent game input.
 
 The runtime order is: input callbacks queue semantic actions, `ui:update(dt)` dispatches those actions and rebuilds the declarative view from the latest model, then `ui:draw()` renders the resulting layout. Omit `dispatch` and call `ui:take_actions()` when the game prefers to drain the queue itself.
+
+Pass `viewport = function() return width, height end` to `UI.new` when the UI
+must lay itself out inside a configured game viewport rather than the physical
+LÖVE drawable.
 
 ## Scoped styles
 
@@ -163,6 +167,27 @@ UI.row {
 
 `UI.stack`, `UI.screen`, and `UI.panel` overlap their children. Declaration order is back-to-front; an optional numeric `z` changes Local Z-order. Painting and hit routing always share that order.
 
+`UI.flow` lays children left-to-right and wraps them onto new lines. Bounded
+containers use `overflow = "auto"` by default, clip excess content, respond to
+the mouse wheel, render a draggable vertical scrollbar, and keep controller
+Selection visible. Configure those behaviors independently:
+
+```lua
+UI.column {
+    id = "inventory",
+    width = 360,
+    max_height = 420,
+    scroll = {
+        wheel = true,       -- false disables wheel input
+        drag = true,        -- false disables scrollbar dragging
+        scrollbar = "auto" -- "hidden" hides it
+    },
+    children = inventory_rows,
+}
+```
+
+Use `overflow = "visible"` to opt out or `"hidden"` to clip without scrolling.
+
 ## Motion and transitions
 
 Visual transforms are applied after layout and do not move siblings. Translation uses logical or relative UI units; scale and rotation are unitless and radians respectively. The same composed transform is used for rendering and Hit Regions.
@@ -236,7 +261,7 @@ Pointer movement drives these actions after mouse capture. A selected drag handl
 
 Use `dragged` values to directly control a transform while held, then retarget the same Motion Value from `drag_ended` to settle or snap the surface. A stationary press reports zero total distance, so callers can leave the surface unchanged rather than treating a click as a directional gesture.
 
-## Fonts and SVG icons
+## Fonts, images, sprites, and SVG icons
 
 Font families map weights to LÖVE-readable font files. A text style selects a family, weight, and logical size:
 
@@ -262,7 +287,53 @@ UI.text_field {id = "name", text_style = "body"}
 
 When no file is assigned to a family, LÖVE's default font is used. Configured font files are cached by path and rendered size; an invalid configured path raises an error instead of silently changing the typeface.
 
-SVG files are registered by semantic name in `UI.new {icons = {...}}` and used with either `UI.icon` or a button's `icon` shorthand. The built-in lightweight renderer supports paths (`M/L/H/V/C/S/Q/T/Z`), lines, circles, fills, strokes, tinting, `viewBox`, and compound even-odd/non-zero fills. It intentionally does not implement the entire browser SVG standard; pre-flatten transforms and unsupported elements or arc commands in exported assets.
+Register raster images or sprite sheets in `images`. Media uses `fit =
+"contain"` by default: it preserves aspect ratio and shrinks to fit the space
+the layout can actually provide. Use `"cover"` to fill and clip, `"stretch"`
+to ignore aspect ratio, or `"none"` only when intrinsic size is intentional.
+
+```lua
+local ui = UI.new {
+    images = {
+        portrait = "assets/portrait.png",
+        player = {
+            path = "assets/player.png",
+            frame_width = 32,
+            frame_height = 32,
+            filter = "nearest",
+        },
+    },
+}
+
+UI.image {name = "portrait", width = 160, height = 90}
+UI.image {name = "player", frame = model.frame, width = 64, height = 64}
+```
+
+`quad = {x, y, w, h}` can select an arbitrary raster region. `UI.icon` remains
+the semantic constructor for iconography and shares the same media pipeline.
+
+SVG files may be registered in either `images` or the compatible `icons`
+registry. The independent `require("graphics.svg")` module owns parsing,
+drawing, backdrops, and parsed-data caching; UI2D consumes it like any other
+media source. Its lightweight renderer supports paths (`M/L/H/V/C/S/Q/T/Z`),
+lines, circles, fills, strokes, tinting, `data-color` slots, `viewBox`, and
+compound even-odd/non-zero fills. It intentionally does not implement the
+entire browser SVG standard; pre-flatten transforms and unsupported elements
+or arc commands in exported assets. A regular color table passed as `tint`
+colors the entire SVG; a map such as `tint = {primary = "accent", default =
+"white"}` colors elements by their `data-color` value.
+
+Text wraps using the selected font's measured glyph widths:
+
+```lua
+UI.text {
+    value = model.description,
+    width = "fill",
+    wrap = true,
+    max_lines = 4,
+    overflow = "ellipsis",
+}
+```
 
 Buttons activate immediately on mouse press-down. Selected buttons likewise activate on the Space/Enter keypress; release only clears their pressed visual state and pointer/keyboard capture.
 
@@ -330,6 +401,62 @@ UI.segmented_control {
 
 The dispatched action includes `control`, `value`, and the one-based `index`. `changed` may also be an action table, and `enabled = false` disables every segment.
 
+## Sliders, progress, selects, tooltips, and modals
+
+Sliders work with pointer dragging and semantic left/right or up/down
+navigation. Their `changed` action includes `control` and the snapped `value`:
+
+```lua
+UI.slider {
+    id = "music-volume",
+    value = model.volume,
+    minimum = 0,
+    maximum = 1,
+    step = 0.05,
+    changed = "set_music_volume",
+}
+
+UI.progress {
+    id = "boss-health",
+    value = model.health,
+    maximum = model.max_health,
+    background = "health_track",
+    fill = "health_fill",
+    label = model.health .. " HP",
+}
+```
+
+One `UI.select` supports both flat `options` and optional labeled `groups`;
+there is no separate grouped-select control. Long option lists scroll.
+
+```lua
+UI.select {
+    id = "resolution",
+    value = model.resolution,
+    groups = {
+        {label = "16:9", options = {
+            {value = "1280x720", label = "1280 × 720"},
+            {value = "1920x1080", label = "1920 × 1080"},
+        }},
+        {label = "Ultrawide", options = {
+            {value = "3440x1440", label = "3440 × 1440"},
+        }},
+    },
+    changed = "set_resolution",
+}
+```
+
+`UI.tooltip` anchors to a node ID or rectangle. `placement` accepts `"left"`,
+`"right"`, `"top"`, `"bottom"`, or `"auto"`; collision handling tries another
+side and shifts inside the viewport. Set `collision = "none"` for strict
+placement, or provide `place = function(environment) return {x=..., y=...} end`
+for full control.
+
+`UI.modal` builds a blocking screen, centered panel, contained navigation
+group, and optional action row. Mount it as a blocking View Layer with
+`ui:push`; actions remain ordinary asynchronous UI2D actions rather than
+pausing the game loop.
+
 ## Selection and controller navigation
 
 UI2D keeps mouse-only `hovered`, activation `pressed`, controller/keyboard `selected`, and text-editing `focused` states distinct. A pointer-hovered item also presents as selected while pointer input is active; actual controller or keyboard navigation switches selection back without a stationary cursor stealing it during declarative rebuilds. `hover_enter`, `hover_leave`, `press_started`, `press_ended`, `select_enter`, and `select_leave` actions allow behavior to follow the same lifecycle as the visual states.
@@ -358,7 +485,15 @@ The default `input_mode = "automatic"` treats the most recently intentional sour
 
 Use `UI.new {input_mode = "simultaneous"}` when an interface intentionally wants retained mouse hover and controller Selection to remain active together. `initial_input_mode` may override the default initial `pointer` mode.
 
-Rows and columns infer horizontal and vertical Navigation Groups. Movement within a list follows its children; movement between compatible sibling lists preserves the selected ordinal. Disabled controls and nodes with `navigation = false` are skipped. Analog navigation applies a dead zone, dominant-axis selection, initial repeat delay, and repeat interval.
+Rows and columns infer horizontal and vertical Navigation Groups; flows infer
+horizontal groups. Movement within a list follows its children; movement
+between compatible sibling lists preserves the selected ordinal. Disabled
+controls and nodes with `navigation = false`, `selectable = false`, or
+`focusable = false` are skipped. The latter is the clearest declaration for
+interactive-looking elements that must never receive Selection. Non-interactive
+text, image, and layout nodes are never navigation targets. Analog navigation
+applies a dead zone, dominant-axis selection, initial repeat delay, and repeat
+interval.
 
 Automatic behavior can be adjusted at the context, View Layer, root, container, or node:
 
@@ -375,6 +510,13 @@ UI.column {
 ```
 
 A `resolve(request)` function may return a target ID, `false` to stop movement, or `nil` to retain automatic behavior. Set `mode = "manual"` for full control. `ui:select(id, view_key)` selects programmatically and `ui:selected()` returns the active `{id, view, source}`. View Layers block navigation by default; `navigation = "pass"` lets lower layers retain ownership. `keyboard = "pass"` implies navigation pass-through unless the layer explicitly uses `navigation = "block"`, allowing controller selection and raw keyboard routing to remain independent.
+
+When structural grouping cannot decide a move, UI2D scores candidates in the
+requested half-plane. Configure `cross_axis_weight` globally, per layer, or on
+the view root; a custom `score(environment)` can replace the calculation.
+Nodes may provide `navigation_rect` when their useful navigation geometry
+differs from their layout rectangle. `UI.Navigation.resolve_rectangles` exposes
+the same scoring for headless or game-owned target lists.
 
 ## Shader surfaces
 
@@ -410,7 +552,7 @@ UI.panel {
 
 Content shaders should preserve source alpha when drawing fonts or SVGs—for example, by multiplying the result alpha by `Texel(tex, texture_coords).a`.
 
-The UI in Motion example exercises full-screen blocking, a partial pass-through drawer that can tween the same panel to full-screen, a tooltip Hit Blocker, shadered perk-card surfaces, flex layout, hover transitions, and reversible View Layer transitions:
+The UI in Motion example exercises full-screen blocking, a partial pass-through drawer that can tween the same panel to full-screen, a tooltip Hit Blocker, shadered perk-card surfaces, flex layout, hover transitions, and reversible View Layer transitions. Its component lab additionally demonstrates fit-first sprite frames, wrapping text and flow, sliders, animated progress, grouped Select, bounded scrolling, anchored tooltip placement, and a modal:
 
 ```powershell
 & "C:\Program Files\LOVE\lovec.exe" --console examples\ui2d_layers
@@ -422,4 +564,4 @@ The example also forwards a small handwritten controller adapter directly into `
 
 ## Internal structure
 
-The public interface remains `require("ui2d")`. Internally, `core/` owns layout, rendering, input routing, View Layers, navigation, motion, resources, units, and style resolution. `components/` contains one behavior-rich control per file: button, text field, and segmented control. Structural declarations such as screen, row, column, panel, text, icon, and spacer remain together in `core/nodes.lua` because they are lightweight node constructors rather than independent controls.
+The public interface remains `require("ui2d")`. Internally, `core/` owns layout, rendering, input routing, View Layers, navigation, motion, resources, units, and style resolution. `components/` contains one behavior-rich control per file: button, text field, segmented control, slider, progress, select, tooltip, and modal. Structural declarations such as screen, row, column, flow, panel, text, icon, image, and spacer remain together in `core/nodes.lua` because they are lightweight node constructors rather than independent controls.

@@ -1,7 +1,9 @@
 local StyleSheet = require("ui2d.core.style_sheet")
 local FontCache = require("ui2d.core.font_cache")
 local TextField = require("ui2d.components.text_field")
-local Svg = require("ui2d.core.svg")
+local Slider = require("ui2d.components.slider")
+local Select = require("ui2d.components.select")
+local MediaCache = require("ui2d.core.media_cache")
 local Layout = require("ui2d.core.layout")
 local Renderer = require("ui2d.core.renderer")
 local LayerStack = require("ui2d.core.layer_stack")
@@ -31,20 +33,23 @@ function Context.new(config)
     local initial_input_mode = config.initial_input_mode or "pointer"
     local styles = config.styles
     if getmetatable(styles) ~= StyleSheet then styles = StyleSheet.new(styles or {}) end
-    local icons = Svg.Cache.new(config.icons)
+    local media = MediaCache.new(config.images, config.icons)
     local shaders = Shader.Cache.new(config.shaders)
     return setmetatable({
         styles = styles,
-        icons = icons,
+        icons = media,
+        media = media,
         shaders = shaders,
         fonts = FontCache.new(styles),
-        renderer = Renderer.new(styles, icons, shaders),
+        renderer = Renderer.new(styles, media, shaders),
         dispatch = config.dispatch,
         navigation_options = type(config.navigation) == "table" and config.navigation or {},
         navigation_enabled = config.navigation ~= false,
         layers = LayerStack.new(config.layers),
         motion = Motion.new(),
         editors = {},
+        scrolls = {},
+        selects = {},
         actions = {},
         time = 0,
         pointer_x = 0,
@@ -54,6 +59,7 @@ function Context.new(config)
         navigation_input = {x = 0, y = 0},
         input_mode_policy = input_mode_policy,
         initial_input_mode = initial_input_mode,
+        viewport_provider = config.viewport,
     }, Context)
 end
 
@@ -62,6 +68,8 @@ function Context:show(view, options)
     self.layers:clear()
     self.motion = Motion.new()
     self.editors = {}
+    self.scrolls = {}
+    self.selects = {}
     self.hovered, self.pressed, self.focused = nil, nil, nil
     self.selections = {}
     self.selection_mode = self.initial_input_mode
@@ -94,6 +102,8 @@ function Context:push(view, options)
     end
     local entry = self.layers:push(view, options)
     self.editors[entry.key] = self.editors[entry.key] or {}
+    self.scrolls[entry.key] = self.scrolls[entry.key] or {}
+    self.selects[entry.key] = self.selects[entry.key] or {}
     self.motion:add_layer(entry)
     return entry.key
 end
@@ -102,6 +112,8 @@ function Context:discard(key)
     local entry = self.layers:remove(key)
     if not entry then return false end
     self.editors[key] = nil
+    self.scrolls[key] = nil
+    self.selects[key] = nil
     self.selections[key] = nil
     self.motion:remove_layer(key)
     if self.hovered and self.hovered.key == key then self.hovered = nil end
@@ -155,8 +167,28 @@ function Context:editor_for(entry, node)
         same_handle(self.focused, entry.key, node.id))
 end
 
+function Context:scroll_for(entry, node)
+    local view_scrolls = self.scrolls[entry.key]
+    local state = view_scrolls[node.id]
+    if not state then
+        state = {x = 0, y = 0}
+        view_scrolls[node.id] = state
+    end
+    return state
+end
+
+function Context:select_for(entry, node)
+    local view_selects = self.selects[entry.key]
+    local state = view_selects[node.id]
+    if not state then
+        state = {open = node.open == true}
+        view_selects[node.id] = state
+    end
+    return state
+end
+
 function Context:rebuild()
-    local width, height = love.graphics.getDimensions()
+    local width, height = self:viewport()
     for _, entry in ipairs(self.layers.entries) do
         local root = entry.view.build(self:model_value(entry) or {})
         local styles = self.styles
@@ -167,7 +199,14 @@ function Context:rebuild()
             styles = styles,
             fonts = self.fonts:with_styles(styles),
             icons = self.icons,
+            media = self.media,
             editor_for = function(node) return self:editor_for(entry, node) end,
+            scroll_for = function(node)
+                return self:scroll_for(entry, node)
+            end,
+            select_for = function(node)
+                return self:select_for(entry, node)
+            end,
             scale = self.styles:viewport_scale(width, height),
         })
     end
@@ -179,14 +218,19 @@ function Context:rebuild()
         local entry = self.layers:get(key)
         local item = entry and entry.layout and entry.layout.by_id[selection.id]
         if not item or not item.enabled or not item.navigation_enabled then
-            local first = entry and entry.layout and Navigation.first(entry.layout,
-                entry.navigation_options and entry.navigation_options.initial)
+            local first = entry and entry.layout and Navigation.first(
+                entry.layout,
+                self:navigation_options_for(entry).initial
+            )
             self.selections[key] = first and {key = key, id = first.node.id} or nil
         end
     end
     for _, entry in ipairs(self.layers.entries) do
         if entry.navigation ~= "pass" and not self.selections[entry.key] and entry.layout then
-            local first = Navigation.first(entry.layout, entry.navigation_options.initial)
+            local first = Navigation.first(
+                entry.layout,
+                self:navigation_options_for(entry).initial
+            )
             if first then self.selections[entry.key] = {key = entry.key, id = first.node.id} end
         end
     end
@@ -198,6 +242,9 @@ function Context:rebuild()
 end
 
 function Context:queue(action, source_id, extra, view_key)
+    if type(action) == "table" and action.__ui2d_select then
+        return Select.handle(self, action, extra, view_key)
+    end
     local value = Gestures.action_value(action, source_id, extra, view_key)
     if value then self.actions[#self.actions + 1] = value end
 end
@@ -510,6 +557,123 @@ function Context:item_at(x, y)
     return self:route_at(x, y).item
 end
 
+local function point_in_rect(rect, x, y)
+    return rect
+        and x >= rect.x
+        and x <= rect.x + rect.w
+        and y >= rect.y
+        and y <= rect.y + rect.h
+end
+
+local function blocks_lower_pointer_layer(entry, x, y)
+    local layout = entry.layout
+    if not layout then return false end
+    if layout.modal or entry.pointer ~= "pass" then return true end
+    for index = #layout.hit_regions, 1, -1 do
+        if Gestures.point_in_item(layout.hit_regions[index].item, x, y) then
+            return true
+        end
+    end
+    return false
+end
+
+function Context:scroll_at(x, y, delta_x, delta_y)
+    for layer_index = #self.layers.entries, 1, -1 do
+        local entry = self.layers.entries[layer_index]
+        local layout = entry.layout
+        for index = layout and #layout.scrollable or 0, 1, -1 do
+            local item = layout.scrollable[index]
+            local options = type(item.node.scroll) == "table"
+                and item.node.scroll
+                or {}
+            if options.wheel ~= false and Gestures.point_in_item(
+                item,
+                x,
+                y
+            ) then
+                local speed = tonumber(options.wheel_speed) or 42
+                local state = item.scroll_state
+                local previous_x, previous_y = state.x, state.y
+                if item.scroll_max_x > 0 then
+                    state.x = math.max(0, math.min(
+                        item.scroll_max_x,
+                        state.x - (delta_x or 0) * speed
+                    ))
+                end
+                if item.scroll_max_y > 0 then
+                    state.y = math.max(0, math.min(
+                        item.scroll_max_y,
+                        state.y - (delta_y or 0) * speed
+                    ))
+                end
+                if state.x ~= previous_x or state.y ~= previous_y then
+                    self:rebuild()
+                end
+                return true
+            end
+        end
+        if blocks_lower_pointer_layer(entry, x, y) then return false end
+    end
+    return false
+end
+
+function Context:scrollbar_at(x, y)
+    for layer_index = #self.layers.entries, 1, -1 do
+        local entry = self.layers.entries[layer_index]
+        local layout = entry.layout
+        for index = layout and #layout.scrollable or 0, 1, -1 do
+            local item = layout.scrollable[index]
+            local options = type(item.node.scroll) == "table"
+                and item.node.scroll
+                or {}
+            if options.drag ~= false
+                and point_in_rect(item.scrollbar_track, x, y) then
+                return entry, item
+            end
+        end
+        if blocks_lower_pointer_layer(entry, x, y) then return nil end
+    end
+end
+
+function Context:set_scrollbar_pointer(item, pointer_y, offset)
+    local track = item.scrollbar_track
+    local thumb = item.scrollbar_thumb
+    if not track or not thumb or item.scroll_max_y <= 0 then return false end
+    local travel = track.h - thumb.h
+    local position = pointer_y - track.y - (offset or thumb.h * 0.5)
+    item.scroll_state.y = item.scroll_max_y
+        * math.max(0, math.min(1, position / math.max(1, travel)))
+    self:rebuild()
+    return true
+end
+
+function Context:ensure_visible(entry, item)
+    local current = item.parent
+    local changed = false
+    while current do
+        if current.scroll_state and current.scroll_max_y > 0 then
+            local top = current.rect.y
+            local bottom = current.rect.y + current.rect.h
+            if item.rect.y < top then
+                current.scroll_state.y = math.max(
+                    0,
+                    current.scroll_state.y - (top - item.rect.y)
+                )
+                changed = true
+            elseif item.rect.y + item.rect.h > bottom then
+                current.scroll_state.y = math.min(
+                    current.scroll_max_y,
+                    current.scroll_state.y
+                        + (item.rect.y + item.rect.h - bottom)
+                )
+                changed = true
+            end
+        end
+        current = current.parent
+    end
+    if changed then self:rebuild() end
+end
+
 function Context:update_hover()
     if self.input_mode_policy == "automatic" and self.selection_mode ~= "pointer" then
         if self.hovered then
@@ -668,6 +832,7 @@ function Context:set_navigation_selection(entry, item, source)
     if item then
         self:queue(item.node.select_enter, item.node.id,
             {selection_source = source}, entry.key)
+        self:ensure_visible(entry, item)
     end
     return item ~= nil
 end
@@ -721,6 +886,19 @@ function Context:navigate(direction, source)
     local layout = entry and entry.layout
     if not layout or #(layout.navigable or {}) == 0 then return false end
     local selection = self:navigation_selection(entry)
+    local current = selection and layout.by_id[selection.id]
+    if current and current.kind == "slider" and current.enabled then
+        local value = Slider.adjusted_value(current.node, direction)
+        if value ~= nil then
+            self:queue(
+                Slider.changed_action(current.node, value),
+                current.node.id,
+                {input_source = source},
+                entry.key
+            )
+            return true
+        end
+    end
     local options = self:navigation_options_for(entry)
     local request = {
         context = self,
@@ -730,7 +908,7 @@ function Context:navigate(direction, source)
     }
     local target = Navigation.move(layout, selection and selection.id, direction, options, request)
     if target then return self:set_navigation_selection(entry, target, source or "navigation") end
-    local current = selection and layout.by_id[selection.id]
+    current = selection and layout.by_id[selection.id]
     return current and self:set_navigation_selection(entry, current, source or "navigation") or false
 end
 
@@ -762,6 +940,7 @@ function Context:activate_selection(source)
         self.focused = {key = entry.key, id = item.node.id}
         return true
     end
+    if item.kind == "slider" then return true end
     if item.kind ~= "button" then return false end
     self.pressed = {key = entry.key, id = item.node.id}
     self.keyboard_pressed = {key = entry.key, id = item.node.id, semantic = true}
@@ -770,6 +949,17 @@ function Context:activate_selection(source)
     if not self:start_hold(entry, item, source) then
         self:queue(item.node.action, item.node.id, {input_source = source}, entry.key)
     end
+    return true
+end
+
+function Context:change_slider(entry, item, x, y, source)
+    local value = Slider.value_at(item, x, y)
+    self:queue(
+        Slider.changed_action(item.node, value),
+        item.node.id,
+        {input_source = source},
+        entry.key
+    )
     return true
 end
 
@@ -843,6 +1033,9 @@ function Context:pointer()
 end
 
 function Context:viewport()
+    if self.viewport_provider then
+        return self.viewport_provider()
+    end
     return love.graphics.getDimensions()
 end
 

@@ -20,12 +20,21 @@ return UI.view("hud", {
                     style = "body",
                 },
             },
-            UI.button {
-                id = "open-menu",
+            UI.row {
                 anchor = "bottom-center",
-                style = "motion",
-                label = "Open full menu",
-                action = "open_menu",
+                gap = 12,
+                UI.button {
+                    id = "open-menu",
+                    style = "motion",
+                    label = "Open full menu",
+                    action = "open_menu",
+                },
+                UI.button {
+                    id = "open-lab",
+                    style = "motion",
+                    label = "Open component lab",
+                    action = "open_lab",
+                },
             },
         }
     end,
