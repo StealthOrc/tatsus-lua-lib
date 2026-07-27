@@ -37,6 +37,8 @@ local function scroll_content()
         height = 126,
         gap = 4,
         overflow = "auto",
+        overflow_margin = 6,
+        pointer = "block",
         scroll = {
             wheel = true,
             drag = true,
@@ -87,6 +89,7 @@ return UI.view("lab", {
             radius = 7,
             background = "lab_soft",
             border = "accent",
+            pointer = "block",
             content = UI.text {
                 value = "This tooltip prefers "
                     .. model.tooltip_placement
@@ -109,10 +112,12 @@ return UI.view("lab", {
                 border = "accent",
                 border_width = 2,
                 UI.column {
+                    id = "lab-content",
                     width = "fill",
                     height = "fill",
                     gap = 12,
                     overflow = "auto",
+                    overflow_margin = 8,
                     UI.row {
                         width = "fill",
                         align = "center",
@@ -134,12 +139,7 @@ return UI.view("lab", {
                             action = "close_lab",
                         },
                     },
-                    UI.text {
-                        value = "Images preserve their aspect ratio and fit their allocated box. Text wraps from measured font width. The controls below share pointer, keyboard, and controller behavior.",
-                        width = "fill",
-                        wrap = true,
-                        style = "body",
-                    },
+                    UI.spacer {height = 82},
                     UI.row {
                         width = "fill",
                         gap = 18,
@@ -165,7 +165,7 @@ return UI.view("lab", {
                             gap = 7,
                             UI.text {
                                 value = string.format(
-                                    "Energy: %d%%",
+                                    "Fine-grained energy: %d%%",
                                     math.floor(model.energy * 100 + 0.5)
                                 ),
                                 style = "body",
@@ -177,8 +177,27 @@ return UI.view("lab", {
                                 value = model.energy,
                                 minimum = 0,
                                 maximum = 1,
-                                step = 0.05,
+                                step = 0.01,
                                 changed = "set_demo_energy",
+                            },
+                            UI.text {
+                                value = string.format(
+                                    "Stepped energy: %d%%",
+                                    math.floor(
+                                        model.stepped_energy * 100 + 0.5
+                                    )
+                                ),
+                                style = "body",
+                            },
+                            UI.slider {
+                                id = "stepped-energy-slider",
+                                style = "demo",
+                                width = "fill",
+                                value = model.stepped_energy,
+                                minimum = 0,
+                                maximum = 1,
+                                step = 0.05,
+                                changed = "set_demo_stepped_energy",
                             },
                             UI.progress {
                                 id = "energy-progress",

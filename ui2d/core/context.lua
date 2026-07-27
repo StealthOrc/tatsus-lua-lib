@@ -12,6 +12,7 @@ local Shader = require("ui2d.core.shader")
 local Navigation = require("ui2d.core.navigation")
 local Gestures = require("ui2d.core.gestures")
 local InputRouter = require("ui2d.core.input_router")
+local Transform = require("ui2d.core.transform")
 
 local Context = {}
 Context.__index = Context
@@ -627,22 +628,57 @@ function Context:scrollbar_at(x, y)
                 and item.node.scroll
                 or {}
             if options.drag ~= false
-                and point_in_rect(item.scrollbar_track, x, y) then
-                return entry, item
+                and Gestures.point_in_item(item, x, y)
+            then
+                for _, axis in ipairs({"vertical", "horizontal"}) do
+                    local scrollbar = item.scrollbars
+                        and item.scrollbars[axis]
+                    if scrollbar and point_in_rect(
+                        scrollbar.visual_track,
+                        x,
+                        y
+                    ) then
+                        return entry, item, axis
+                    end
+                end
             end
         end
         if blocks_lower_pointer_layer(entry, x, y) then return nil end
     end
 end
 
-function Context:set_scrollbar_pointer(item, pointer_y, offset)
-    local track = item.scrollbar_track
-    local thumb = item.scrollbar_thumb
-    if not track or not thumb or item.scroll_max_y <= 0 then return false end
-    local travel = track.h - thumb.h
-    local position = pointer_y - track.y - (offset or thumb.h * 0.5)
-    item.scroll_state.y = item.scroll_max_y
-        * math.max(0, math.min(1, position / math.max(1, travel)))
+function Context:set_scrollbar_pointer(
+    item,
+    axis,
+    pointer_x,
+    pointer_y,
+    offset
+)
+    local scrollbar = item.scrollbars and item.scrollbars[axis]
+    if not scrollbar then return false end
+    local local_x, local_y = Transform.unapply(
+        item.world_transform,
+        pointer_x,
+        pointer_y
+    )
+    if not local_x then return false end
+    local vertical = axis == "vertical"
+    local track, thumb = scrollbar.track, scrollbar.thumb
+    local track_length = vertical and track.h or track.w
+    local thumb_length = vertical and thumb.h or thumb.w
+    local pointer = vertical and local_y or local_x
+    local origin = vertical and track.y or track.x
+    local maximum = vertical and item.scroll_max_y or item.scroll_max_x
+    local position = pointer - origin - (offset or thumb_length * 0.5)
+    local value = maximum
+        * math.max(
+            0,
+            math.min(
+                1,
+                position / math.max(1, track_length - thumb_length)
+            )
+        )
+    item.scroll_state[vertical and "y" or "x"] = value
     self:rebuild()
     return true
 end
@@ -652,8 +688,10 @@ function Context:ensure_visible(entry, item)
     local changed = false
     while current do
         if current.scroll_state and current.scroll_max_y > 0 then
-            local top = current.rect.y
-            local bottom = current.rect.y + current.rect.h
+            local viewport = current.scroll_viewport_rect
+                or current.rect
+            local top = viewport.y
+            local bottom = viewport.y + viewport.h
             if item.rect.y < top then
                 current.scroll_state.y = math.max(
                     0,
@@ -665,6 +703,26 @@ function Context:ensure_visible(entry, item)
                     current.scroll_max_y,
                     current.scroll_state.y
                         + (item.rect.y + item.rect.h - bottom)
+                )
+                changed = true
+            end
+        end
+        if current.scroll_state and current.scroll_max_x > 0 then
+            local viewport = current.scroll_viewport_rect
+                or current.rect
+            local left = viewport.x
+            local right = viewport.x + viewport.w
+            if item.rect.x < left then
+                current.scroll_state.x = math.max(
+                    0,
+                    current.scroll_state.x - (left - item.rect.x)
+                )
+                changed = true
+            elseif item.rect.x + item.rect.w > right then
+                current.scroll_state.x = math.min(
+                    current.scroll_max_x,
+                    current.scroll_state.x
+                        + (item.rect.x + item.rect.w - right)
                 )
                 changed = true
             end

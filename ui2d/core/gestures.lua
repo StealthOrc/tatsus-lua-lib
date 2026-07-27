@@ -5,7 +5,7 @@ local Gestures = {}
 
 function Gestures.point_in_item(item, x, y)
     if not item then return false end
-    local clip = item.clip_rect
+    local clip = item.visual_clip_rect
     if clip and (
         x < clip.x
             or x > clip.x + clip.w

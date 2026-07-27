@@ -360,6 +360,13 @@ local function content_rect(item)
     }
 end
 
+local function fills(item, dimension_name)
+    return resolve_token(
+        item.env.styles,
+        item.node[dimension_name]
+    ) == "fill"
+end
+
 local function flex_main_sizes(item, area, horizontal, result)
     local available = horizontal and area.w or area.h
     local sizes, active = {}, {}
@@ -419,7 +426,14 @@ arrange = function(item, x, y, width, height, result, inherited_clip)
         if result.by_id[item.node.id] then error("duplicate node id in view: " .. item.node.id) end
         result.by_id[item.node.id] = item
     end
-    if item.kind == "panel" and item.node.pointer ~= "pass" then
+    local blocks_pointer = item.node.pointer == "block"
+        or item.kind == "panel" and item.node.pointer ~= "pass"
+        or (
+            (item.overflow == "auto" or item.overflow == "scroll")
+            and item.node.id
+            and item.node.pointer ~= "pass"
+        )
+    if blocks_pointer then
         result.hit_regions[#result.hit_regions + 1] = {item = item, blocks = true}
     end
     if item.interactive then
@@ -429,7 +443,7 @@ arrange = function(item, x, y, width, height, result, inherited_clip)
     local area = content_rect(item)
     local scroll_x, scroll_y = 0, 0
     if item.overflow and item.overflow ~= "visible" then
-        item.clip_rect = intersection(inherited_clip, area)
+        item.scroll_viewport_rect = area
         item.scroll_max_x = math.max(
             0,
             (item.inner_content_w or area.w) - area.w
@@ -449,25 +463,60 @@ arrange = function(item, x, y, width, height, result, inherited_clip)
         )
         item.scroll_x, item.scroll_y = state.x, state.y
         scroll_x, scroll_y = state.x, state.y
-        if item.node.id and (
+        item.clips_children = item.overflow == "hidden"
+            or item.overflow == "scroll"
+            or item.scroll_max_x > 0
+            or item.scroll_max_y > 0
+        if item.clips_children then
+            local margin = insets(
+                item.node.overflow_margin or 0,
+                area.w,
+                area.h,
+                item.env
+            )
+            item.own_clip_rect = {
+                x = area.x - margin.left,
+                y = area.y - margin.top,
+                w = area.w + margin.left + margin.right,
+                h = area.h + margin.top + margin.bottom,
+            }
+            item.child_clip_rect = intersection(
+                inherited_clip,
+                item.own_clip_rect
+            )
+        end
+        if item.node.id
+            and item.overflow ~= "hidden"
+            and (
             item.overflow == "scroll"
                 or item.scroll_max_x > 0
                 or item.scroll_max_y > 0
-        ) then
+            )
+        then
             result.scrollable[#result.scrollable + 1] = item
         end
     end
+    item.child_clip_rect = item.child_clip_rect or item.clip_rect
     if item.kind == "screen" or item.kind == "stack" or item.kind == "panel" then
         for _, child in ipairs(item.children or {}) do
-            local child_x, child_y = anchored(area, child.w, child.h, child.node.anchor)
+            local child_width = fills(child, "width")
+                and area.w or child.w
+            local child_height = fills(child, "height")
+                and area.h or child.h
+            local child_x, child_y = anchored(
+                area,
+                child_width,
+                child_height,
+                child.node.anchor
+            )
             arrange(
                 child,
                 child_x - scroll_x,
                 child_y - scroll_y,
-                child.w,
-                child.h,
+                child_width,
+                child_height,
                 result,
-                item.clip_rect
+                item.child_clip_rect
             )
         end
     elseif item.kind == "row" or item.kind == "column" then
@@ -489,20 +538,27 @@ arrange = function(item, x, y, width, height, result, inherited_clip)
             local child_x, child_y = area.x, area.y
             if horizontal then
                 child_x = cursor
-                if item.node.align == "center" then child_y = area.y + (area.h - child.h) / 2
-                elseif item.node.align == "end" then child_y = area.y + area.h - child.h end
+                local child_height = fills(child, "height")
+                    and area.h or child.h
+                if item.node.align == "center" then child_y = area.y + (area.h - child_height) / 2
+                elseif item.node.align == "end" then child_y = area.y + area.h - child_height end
                 cursor = cursor + main_size + item.gap
             else
                 child_y = cursor
-                if item.node.align == "center" then child_x = area.x + (area.w - child.w) / 2
-                elseif item.node.align == "end" then child_x = area.x + area.w - child.w end
+                local child_width = fills(child, "width")
+                    and area.w or child.w
+                if item.node.align == "center" then child_x = area.x + (area.w - child_width) / 2
+                elseif item.node.align == "end" then child_x = area.x + area.w - child_width end
                 cursor = cursor + main_size + item.gap
             end
             arrange(child, child_x, child_y,
-                horizontal and main_size or child.w,
-                horizontal and child.h or main_size,
+                horizontal and main_size
+                    or (fills(child, "width") and area.w or child.w),
+                horizontal
+                    and (fills(child, "height") and area.h or child.h)
+                    or main_size,
                 result,
-                item.clip_rect)
+                item.child_clip_rect)
         end
     elseif item.kind == "flow" then
         local cursor_x = area.x - scroll_x
@@ -523,7 +579,7 @@ arrange = function(item, x, y, width, height, result, inherited_clip)
                 child.w,
                 child.h,
                 result,
-                item.clip_rect
+                item.child_clip_rect
             )
             cursor_x = cursor_x + child.w + item.gap
             line_height = math.max(line_height, child.h)
@@ -537,7 +593,7 @@ arrange = function(item, x, y, width, height, result, inherited_clip)
             child.w,
             child.h,
             result,
-            item.clip_rect
+            item.child_clip_rect
         )
     end
 end
@@ -568,9 +624,17 @@ end
 
 local function shift_tree(item, dx, dy)
     item.rect.x, item.rect.y = item.rect.x + dx, item.rect.y + dy
-    if item.clip_rect then
-        item.clip_rect.x = item.clip_rect.x + dx
-        item.clip_rect.y = item.clip_rect.y + dy
+    local shifted = {}
+    for _, rect in ipairs({
+        item.clip_rect,
+        item.own_clip_rect,
+        item.child_clip_rect,
+    }) do
+        if rect and not shifted[rect] then
+            rect.x = rect.x + dx
+            rect.y = rect.y + dy
+            shifted[rect] = true
+        end
     end
     for _, child in ipairs(item.children or {}) do
         shift_tree(child, dx, dy)
@@ -728,22 +792,41 @@ function Layout.resolve_visual_transform(item, layout, source)
     }
 end
 
-local function refresh_item(item, layout, parent_transform)
+local function refresh_item(
+    item,
+    layout,
+    parent_transform,
+    inherited_visual_clip
+)
     item.visual_transform = Layout.resolve_visual_transform(item, layout)
     item.local_transform = Transform.compose(item.visual_transform)
     item.world_transform = Transform.multiply(parent_transform, item.local_transform)
     item.visual_rect = Transform.bounds(item.world_transform, item.rect)
+    item.visual_clip_rect = inherited_visual_clip
+    local child_visual_clip = inherited_visual_clip
+    if item.clips_children and item.own_clip_rect then
+        child_visual_clip = intersection(
+            inherited_visual_clip,
+            Transform.bounds(item.world_transform, item.own_clip_rect)
+        )
+    end
+    item.visual_child_clip_rect = child_visual_clip
     item.visual_opacity = item.animated_opacity == nil and (item.node.opacity == nil and 1 or item.node.opacity)
         or item.animated_opacity
     for _, child in ipairs(item.children or {}) do
-        refresh_item(child, layout, item.world_transform)
+        refresh_item(
+            child,
+            layout,
+            item.world_transform,
+            child_visual_clip
+        )
     end
 end
 
 function Layout.refresh_visuals(layout)
     local parent = Transform.identity()
     if layout.layer_visual_transform then parent = Transform.compose(layout.layer_visual_transform) end
-    refresh_item(layout.root, layout, parent)
+    refresh_item(layout.root, layout, parent, nil)
 end
 
 Layout.resolve_length = length

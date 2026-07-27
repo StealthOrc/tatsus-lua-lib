@@ -1,4 +1,5 @@
 local Layout = require("ui2d.core.layout")
+local Transform = require("ui2d.core.transform")
 local RenderValues = require("ui2d.core.render_values")
 local Button = require("ui2d.components.button")
 local TextField = require("ui2d.components.text_field")
@@ -46,6 +47,86 @@ local function media_tint(styles, value)
         result[slot] = color(styles, slot_color)
     end
     return result
+end
+
+local function draw_scrollbar(item, axis, layout, alpha)
+    local vertical = axis == "vertical"
+    local maximum = vertical and item.scroll_max_y or item.scroll_max_x
+    if not maximum or maximum <= 0 then return end
+    local thickness = math.max(3, 4 * layout.scale)
+    local has_other = vertical
+        and item.scroll_max_x and item.scroll_max_x > 0
+        or not vertical and item.scroll_max_y and item.scroll_max_y > 0
+    local viewport_rect = item.scroll_viewport_rect or item.rect
+    local track = vertical and {
+        x = viewport_rect.x + viewport_rect.w - thickness,
+        y = viewport_rect.y,
+        w = thickness,
+        h = viewport_rect.h - (has_other and thickness or 0),
+    } or {
+        x = viewport_rect.x,
+        y = viewport_rect.y + viewport_rect.h - thickness,
+        w = viewport_rect.w - (has_other and thickness or 0),
+        h = thickness,
+    }
+    local viewport = vertical and viewport_rect.h or viewport_rect.w
+    local content = vertical
+        and (item.inner_content_h or item.rect.h)
+        or (item.inner_content_w or item.rect.w)
+    local track_length = vertical and track.h or track.w
+    local thumb_length = math.min(
+        track_length,
+        math.max(
+            18 * layout.scale,
+            track_length * viewport / math.max(viewport, content)
+        )
+    )
+    local travel = math.max(0, track_length - thumb_length)
+    local offset = (
+        vertical and item.scroll_y or item.scroll_x
+    ) / maximum * travel
+    local thumb = vertical and {
+        x = track.x,
+        y = track.y + offset,
+        w = thickness,
+        h = thumb_length,
+    } or {
+        x = track.x + offset,
+        y = track.y,
+        w = thumb_length,
+        h = thickness,
+    }
+    item.scrollbars = item.scrollbars or {}
+    item.scrollbars[axis] = {
+        track = track,
+        thumb = thumb,
+        visual_track = Transform.bounds(item.world_transform, track),
+        visual_thumb = Transform.bounds(item.world_transform, thumb),
+    }
+    if vertical then
+        item.scrollbar_track = track
+        item.scrollbar_thumb = thumb
+    end
+    love.graphics.setColor(1, 1, 1, 0.18 * alpha)
+    love.graphics.rectangle(
+        "fill",
+        track.x,
+        track.y,
+        track.w,
+        track.h,
+        thickness / 2,
+        thickness / 2
+    )
+    love.graphics.setColor(1, 1, 1, 0.62 * alpha)
+    love.graphics.rectangle(
+        "fill",
+        thumb.x,
+        thumb.y,
+        thumb.w,
+        thumb.h,
+        thickness / 2,
+        thickness / 2
+    )
 end
 
 function Renderer.new(styles, media, shaders)
@@ -191,11 +272,11 @@ local function draw_item(self, item, context, layout, entry, inherited_alpha, in
             )
         end)
     end
-    local clips_children = item.overflow and item.overflow ~= "visible"
+    local clips_children = item.clips_children
     local previous_scissor
     if clips_children then
         previous_scissor = {love.graphics.getScissor()}
-        local clip = item.clip_rect
+        local clip = item.visual_child_clip_rect
         if clip then
             love.graphics.setScissor(clip.x, clip.y, clip.w, clip.h)
         end
@@ -215,54 +296,13 @@ local function draw_item(self, item, context, layout, entry, inherited_alpha, in
             love.graphics.setScissor()
         end
     end
-    if item.scroll_max_y and item.scroll_max_y > 0
-        and (not item.node.scroll
-            or item.node.scroll.scrollbar ~= "hidden")
-    then
-        local track_width = math.max(3, 4 * layout.scale)
-        local track_x = item.rect.x + item.rect.w - track_width
-        local track_y = item.rect.y
-        local track_height = item.rect.h
-        local visible_ratio = item.rect.h
-            / math.max(item.rect.h, item.inner_content_h or item.rect.h)
-        local thumb_height = math.max(
-            18 * layout.scale,
-            track_height * visible_ratio
-        )
-        local travel = math.max(0, track_height - thumb_height)
-        local progress = item.scroll_y / item.scroll_max_y
-        item.scrollbar_track = {
-            x = track_x,
-            y = track_y,
-            w = track_width,
-            h = track_height,
-        }
-        item.scrollbar_thumb = {
-            x = track_x,
-            y = track_y + travel * progress,
-            w = track_width,
-            h = thumb_height,
-        }
-        love.graphics.setColor(1, 1, 1, 0.18 * alpha)
-        love.graphics.rectangle(
-            "fill",
-            track_x,
-            track_y,
-            track_width,
-            track_height,
-            track_width / 2,
-            track_width / 2
-        )
-        love.graphics.setColor(1, 1, 1, 0.62 * alpha)
-        love.graphics.rectangle(
-            "fill",
-            item.scrollbar_thumb.x,
-            item.scrollbar_thumb.y,
-            item.scrollbar_thumb.w,
-            item.scrollbar_thumb.h,
-            track_width / 2,
-            track_width / 2
-        )
+    local scroll_options = type(item.node.scroll) == "table"
+        and item.node.scroll
+        or {}
+    if scroll_options.scrollbar ~= "hidden" then
+        item.scrollbars = {}
+        draw_scrollbar(item, "vertical", layout, alpha)
+        draw_scrollbar(item, "horizontal", layout, alpha)
     end
     love.graphics.pop()
 end

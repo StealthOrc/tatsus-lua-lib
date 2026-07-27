@@ -123,6 +123,7 @@ function Select.measure(node, available_w, available_h, env, measure)
                 height = "fill",
                 gap = node.option_gap or 2,
                 overflow = "auto",
+                overflow_margin = node.overflow_margin or 8,
                 children = entries,
             },
         }

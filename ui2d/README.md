@@ -168,15 +168,18 @@ UI.row {
 `UI.stack`, `UI.screen`, and `UI.panel` overlap their children. Declaration order is back-to-front; an optional numeric `z` changes Local Z-order. Painting and hit routing always share that order.
 
 `UI.flow` lays children left-to-right and wraps them onto new lines. Bounded
-containers use `overflow = "auto"` by default, clip excess content, respond to
-the mouse wheel, render a draggable vertical scrollbar, and keep controller
-Selection visible. Configure those behaviors independently:
+containers use `overflow = "auto"` by default. They remain visually open while
+their content fits; actual excess content activates clipping, wheel scrolling,
+draggable horizontal or vertical scrollbars, and controller Selection
+visibility. Configure those behaviors independently:
 
 ```lua
 UI.column {
     id = "inventory",
     width = 360,
     max_height = 420,
+    pointer = "block", -- consume otherwise-unhandled pointer input
+    overflow_margin = 8, -- let hover transforms escape the clip slightly
     scroll = {
         wheel = true,       -- false disables wheel input
         drag = true,        -- false disables scrollbar dragging
@@ -187,6 +190,11 @@ UI.column {
 ```
 
 Use `overflow = "visible"` to opt out or `"hidden"` to clip without scrolling.
+`overflow_margin` expands only the visual/hit clip; the scroll viewport and
+scrollbar range retain the declared container size. This is useful when a
+selected button grows or lifts without allowing offscreen list entries to leak
+into the view. Scrollable containers with IDs block otherwise-unhandled pointer
+input by default; set `pointer = "pass"` when propagation is intentional.
 
 ## Motion and transitions
 

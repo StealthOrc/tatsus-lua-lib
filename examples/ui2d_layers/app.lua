@@ -92,8 +92,9 @@ function App.new()
         menu_title = "Blocking View Layer",
         gamepad_axes = {},
         demo_energy = 0.65,
+        demo_stepped_energy = 0.65,
         demo_resolution = "1920x1080",
-        tooltip_placement = "right",
+        tooltip_placement = "top",
         sprite_frame = 1,
         sprite_elapsed = 0,
     }, App)
@@ -283,6 +284,7 @@ end
 function App:lab_model()
     return {
         energy = self.demo_energy,
+        stepped_energy = self.demo_stepped_energy,
         resolution = self.demo_resolution,
         tooltip_placement = self.tooltip_placement,
         sprite_frame = self.sprite_frame,
@@ -361,6 +363,8 @@ function App:dispatch(action)
         self.ui:remove("lab-modal")
     elseif action.type == "set_demo_energy" then
         self.demo_energy = action.value
+    elseif action.type == "set_demo_stepped_energy" then
+        self.demo_stepped_energy = action.value
     elseif action.type == "set_demo_resolution" then
         self.demo_resolution = action.value
     elseif action.type == "set_tooltip_placement" then
