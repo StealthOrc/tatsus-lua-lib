@@ -89,6 +89,7 @@ return UI.view("drawer", {
                 background = "panel",
                 border = "accent",
                 border_width = 2,
+                overflow = "visible",
                 transform = {translate_y = UI.percent(progress)},
                 transition = {
                     transform = {

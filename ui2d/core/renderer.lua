@@ -1,7 +1,9 @@
 local Layout = require("ui2d.core.layout")
+local Transform = require("ui2d.core.transform")
 local RenderValues = require("ui2d.core.render_values")
 local Button = require("ui2d.components.button")
 local TextField = require("ui2d.components.text_field")
+local Slider = require("ui2d.components.slider")
 
 local Renderer = {}
 Renderer.__index = Renderer
@@ -18,7 +20,10 @@ local function apply_transform(spec)
 end
 
 local function primary_surface(item)
-    if item.kind == "text" or item.kind == "icon" then return "content" end
+    if item.kind == "text" or item.kind == "icon"
+        or item.kind == "image" then
+        return "content"
+    end
     return "background"
 end
 
@@ -32,8 +37,105 @@ local function declared_surface(item, surface)
     return nil
 end
 
-function Renderer.new(styles, icons, shaders)
-    return setmetatable({styles = styles, icons = icons, shaders = shaders}, Renderer)
+local function media_tint(styles, value)
+    if value == nil then return nil end
+    if type(value) ~= "table" or value[1] ~= nil then
+        return color(styles, value)
+    end
+    local result = {}
+    for slot, slot_color in pairs(value) do
+        result[slot] = color(styles, slot_color)
+    end
+    return result
+end
+
+local function draw_scrollbar(item, axis, layout, alpha)
+    local vertical = axis == "vertical"
+    local maximum = vertical and item.scroll_max_y or item.scroll_max_x
+    if not maximum or maximum <= 0 then return end
+    local thickness = math.max(3, 4 * layout.scale)
+    local has_other = vertical
+        and item.scroll_max_x and item.scroll_max_x > 0
+        or not vertical and item.scroll_max_y and item.scroll_max_y > 0
+    local viewport_rect = item.scroll_viewport_rect or item.rect
+    local track = vertical and {
+        x = viewport_rect.x + viewport_rect.w - thickness,
+        y = viewport_rect.y,
+        w = thickness,
+        h = viewport_rect.h - (has_other and thickness or 0),
+    } or {
+        x = viewport_rect.x,
+        y = viewport_rect.y + viewport_rect.h - thickness,
+        w = viewport_rect.w - (has_other and thickness or 0),
+        h = thickness,
+    }
+    local viewport = vertical and viewport_rect.h or viewport_rect.w
+    local content = vertical
+        and (item.inner_content_h or item.rect.h)
+        or (item.inner_content_w or item.rect.w)
+    local track_length = vertical and track.h or track.w
+    local thumb_length = math.min(
+        track_length,
+        math.max(
+            18 * layout.scale,
+            track_length * viewport / math.max(viewport, content)
+        )
+    )
+    local travel = math.max(0, track_length - thumb_length)
+    local offset = (
+        vertical and item.scroll_y or item.scroll_x
+    ) / maximum * travel
+    local thumb = vertical and {
+        x = track.x,
+        y = track.y + offset,
+        w = thickness,
+        h = thumb_length,
+    } or {
+        x = track.x + offset,
+        y = track.y,
+        w = thumb_length,
+        h = thickness,
+    }
+    item.scrollbars = item.scrollbars or {}
+    item.scrollbars[axis] = {
+        track = track,
+        thumb = thumb,
+        visual_track = Transform.bounds(item.world_transform, track),
+        visual_thumb = Transform.bounds(item.world_transform, thumb),
+    }
+    if vertical then
+        item.scrollbar_track = track
+        item.scrollbar_thumb = thumb
+    end
+    love.graphics.setColor(1, 1, 1, 0.18 * alpha)
+    love.graphics.rectangle(
+        "fill",
+        track.x,
+        track.y,
+        track.w,
+        track.h,
+        thickness / 2,
+        thickness / 2
+    )
+    love.graphics.setColor(1, 1, 1, 0.62 * alpha)
+    love.graphics.rectangle(
+        "fill",
+        thumb.x,
+        thumb.y,
+        thumb.w,
+        thumb.h,
+        thickness / 2,
+        thickness / 2
+    )
+end
+
+function Renderer.new(styles, media, shaders)
+    return setmetatable({
+        styles = styles,
+        icons = media,
+        media = media,
+        shaders = shaders,
+    }, Renderer)
 end
 
 function Renderer:with_surface(spec, surface, item, context, layout, entry, alpha, draw)
@@ -110,7 +212,8 @@ local function draw_item(self, item, context, layout, entry, inherited_alpha, in
     item.hold_progress = state.hold_progress
     local environment = {context = context, layout = layout, entry = entry}
     if item.kind == "screen" or item.kind == "panel" or item.kind == "row"
-        or item.kind == "column" or item.kind == "stack"
+        or item.kind == "column" or item.kind == "flow"
+        or item.kind == "stack"
     then
         self:container(item, layout.scale, alpha, surfaces, environment)
     elseif item.kind == "button" then
@@ -118,25 +221,88 @@ local function draw_item(self, item, context, layout, entry, inherited_alpha, in
     elseif item.kind == "text_field" then
         TextField.draw(self, item, state,
             layout.scale, context.time, alpha, surfaces, environment)
+    elseif item.kind == "slider" then
+        Slider.draw(
+            self,
+            item,
+            state,
+            layout.scale,
+            alpha,
+            surfaces,
+            environment
+        )
     elseif item.kind == "text" then
         self:with_surface(surfaces.content, "content", item, context, layout, entry, alpha, function()
             love.graphics.setFont(item.font)
             set_color(color(item.styles or self.styles,
                 item.node.color or item.text_style.color), alpha)
-            local x = item.rect.x
-            if item.node.align == "center" then x = item.rect.x + (item.rect.w - item.font:getWidth(item.text)) / 2
-            elseif item.node.align == "right" then x = item.rect.x + item.rect.w - item.font:getWidth(item.text) end
-            love.graphics.print(item.text, math.floor(x + 0.5), math.floor(item.rect.y + 0.5))
+            for index, line in ipairs(item.lines or {item.text}) do
+                local x = item.rect.x
+                if item.node.align == "center" then
+                    x = item.rect.x
+                        + (item.rect.w - item.font:getWidth(line)) / 2
+                elseif item.node.align == "right" then
+                    x = item.rect.x + item.rect.w
+                        - item.font:getWidth(line)
+                end
+                local y = item.rect.y
+                    + (index - 1) * (item.line_advance or item.font:getHeight())
+                love.graphics.print(
+                    line,
+                    math.floor(x + 0.5),
+                    math.floor(y + 0.5)
+                )
+            end
         end)
-    elseif item.kind == "icon" then
+    elseif item.kind == "icon" or item.kind == "image" then
         self:with_surface(surfaces.content, "content", item, context, layout, entry, alpha, function()
-            local tint = item.node.tint and color(item.styles or self.styles, item.node.tint) or nil
-            self.icons:draw(item.node.name, item.rect.x, item.rect.y, item.rect.w, item.rect.h,
-                tint, (item.node.alpha or 1) * alpha)
+            local tint = media_tint(
+                item.styles or self.styles,
+                item.node.tint
+            )
+            self.media:draw(
+                item.media_name,
+                item.rect.x,
+                item.rect.y,
+                item.rect.w,
+                item.rect.h,
+                tint,
+                (item.node.alpha or 1) * alpha,
+                item.node
+            )
         end)
+    end
+    local clips_children = item.clips_children
+    local previous_scissor
+    if clips_children then
+        previous_scissor = {love.graphics.getScissor()}
+        local clip = item.visual_child_clip_rect
+        if clip then
+            love.graphics.setScissor(clip.x, clip.y, clip.w, clip.h)
+        end
     end
     for _, child in ipairs(item.children or {}) do
         draw_item(self, child, context, layout, entry, alpha, content_shader)
+    end
+    if clips_children then
+        if previous_scissor[1] then
+            love.graphics.setScissor(
+                previous_scissor[1],
+                previous_scissor[2],
+                previous_scissor[3],
+                previous_scissor[4]
+            )
+        else
+            love.graphics.setScissor()
+        end
+    end
+    local scroll_options = type(item.node.scroll) == "table"
+        and item.node.scroll
+        or {}
+    if scroll_options.scrollbar ~= "hidden" then
+        item.scrollbars = {}
+        draw_scrollbar(item, "vertical", layout, alpha)
+        draw_scrollbar(item, "horizontal", layout, alpha)
     end
     love.graphics.pop()
 end

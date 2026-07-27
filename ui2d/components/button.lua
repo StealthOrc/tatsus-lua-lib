@@ -3,6 +3,7 @@ local LayoutValues = require("ui2d.core.layout_values")
 local RenderValues = require("ui2d.core.render_values")
 
 local Button = {}
+local DEFAULT_FOCUS_ALPHA = 0.7
 
 Nodes.register("button")
 
@@ -131,17 +132,30 @@ function Button.draw(renderer, item, state, scale, alpha, surfaces, environment)
         radius, scale, alpha, surfaces.border, environment)
 
     if state.focused or state.selected then
-        local focus = RenderValues.color(styles,
-            interaction.focus or style.focus or style.foreground)
-        local inset = math.max(2, 3 * scale)
-        renderer:with_surface(surfaces.border, "border", item, environment.context,
-            environment.layout, environment.entry, alpha, function()
-                RenderValues.set_color({focus[1], focus[2], focus[3], 0.7}, alpha)
-                love.graphics.setLineWidth(math.max(1, scale))
-                love.graphics.rectangle("line", item.rect.x + inset, item.rect.y + inset,
-                    item.rect.w - inset * 2, item.rect.h - inset * 2,
-                    math.max(0, radius - inset), math.max(0, radius - inset))
-            end)
+        local show_ring = item.node.focus_ring
+        if show_ring == nil then show_ring = style.focus_ring end
+        local focus_value = interaction.focus
+        if focus_value == nil then focus_value = style.focus end
+        if focus_value == nil then focus_value = style.foreground end
+        -- Keep focus=false as a compatibility alias for hiding the visual ring.
+        if show_ring ~= false and focus_value ~= false then
+            local focus = RenderValues.color(styles, focus_value)
+            local focus_alpha =
+                (focus[4] == nil and 1 or focus[4])
+                    * DEFAULT_FOCUS_ALPHA
+            local inset = math.max(2, 3 * scale)
+            renderer:with_surface(surfaces.border, "border", item, environment.context,
+                environment.layout, environment.entry, alpha, function()
+                    RenderValues.set_color(
+                        {focus[1], focus[2], focus[3], focus_alpha},
+                        alpha
+                    )
+                    love.graphics.setLineWidth(math.max(1, scale))
+                    love.graphics.rectangle("line", item.rect.x + inset, item.rect.y + inset,
+                        item.rect.w - inset * 2, item.rect.h - inset * 2,
+                        math.max(0, radius - inset), math.max(0, radius - inset))
+                end)
+        end
     end
 end
 

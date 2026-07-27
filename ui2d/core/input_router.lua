@@ -1,6 +1,7 @@
 local TextField = require("ui2d.components.text_field")
 local Gestures = require("ui2d.core.gestures")
 local Navigation = require("ui2d.core.navigation")
+local Transform = require("ui2d.core.transform")
 
 local InputRouter = {}
 
@@ -72,6 +73,20 @@ function InputRouter.event(context, name, ...)
         context.pointer_x, context.pointer_y = args[1], args[2]
         context:use_pointer_selection()
         local capture = context.pointer_capture
+        if capture and capture.kind == "scrollbar" then
+            local entry = context.layers:get(capture.key)
+            local item = entry and entry.layout.by_id[capture.id]
+            if item then
+                context:set_scrollbar_pointer(
+                    item,
+                    capture.scrollbar_axis,
+                    context.pointer_x,
+                    context.pointer_y,
+                    capture.scrollbar_offset
+                )
+            end
+            return true
+        end
         if capture then
             local entry = context.layers:get(capture.key)
             local item = entry and entry.layout.by_id[capture.id]
@@ -85,6 +100,15 @@ function InputRouter.event(context, name, ...)
             if item and capture.draggable then
                 local values = Gestures.drag_values(capture, context.pointer_x, context.pointer_y)
                 context:queue(item.node.dragged, item.node.id, values, entry.key)
+            end
+            if item and item.kind == "slider" then
+                context:change_slider(
+                    entry,
+                    item,
+                    context.pointer_x,
+                    context.pointer_y,
+                    "pointer"
+                )
             end
             capture.last_x, capture.last_y = context.pointer_x, context.pointer_y
         end
@@ -107,6 +131,46 @@ function InputRouter.event(context, name, ...)
         if context.cancelled_pointer_button == args[3] then
             context.cancelled_pointer_button = nil
         end
+        if args[3] == 1 then
+            local scroll_entry, scroll_item, scrollbar_axis =
+                context:scrollbar_at(context.pointer_x, context.pointer_y)
+            if scroll_item then
+                local scrollbar = scroll_item.scrollbars[scrollbar_axis]
+                local local_x, local_y = Transform.unapply(
+                    scroll_item.world_transform,
+                    context.pointer_x,
+                    context.pointer_y
+                )
+                local vertical = scrollbar_axis == "vertical"
+                local pointer = vertical and local_y or local_x
+                local thumb = scrollbar.thumb
+                local thumb_start = vertical and thumb.y or thumb.x
+                local thumb_length = vertical and thumb.h or thumb.w
+                local offset = pointer >= thumb_start
+                    and pointer <= thumb_start + thumb_length
+                    and pointer - thumb_start
+                    or nil
+                context.pointer_capture = {
+                    key = scroll_entry.key,
+                    id = scroll_item.node.id,
+                    kind = "scrollbar",
+                    scrollbar_axis = scrollbar_axis,
+                    scrollbar_offset = offset,
+                    start_x = context.pointer_x,
+                    start_y = context.pointer_y,
+                    last_x = context.pointer_x,
+                    last_y = context.pointer_y,
+                }
+                context:set_scrollbar_pointer(
+                    scroll_item,
+                    scrollbar_axis,
+                    context.pointer_x,
+                    context.pointer_y,
+                    offset
+                )
+                return true
+            end
+        end
         local route = context:route_at(context.pointer_x, context.pointer_y)
         local item = route.item
         if args[3] == 1 and item and item.enabled then
@@ -123,6 +187,9 @@ function InputRouter.event(context, name, ...)
                 last_y = context.pointer_y,
                 draggable = Gestures.draggable(item.node),
             }
+            if item.kind == "slider" then
+                context.pointer_capture.draggable = true
+            end
             if item.kind == "text_field" then
                 TextField.move_pointer(item, context.pointer_x, context.pointer_y, false)
             end
@@ -136,7 +203,15 @@ function InputRouter.event(context, name, ...)
             }, route.entry.key)
             context:queue(item.node.press_started, item.node.id,
                 {input_source = "pointer"}, route.entry.key)
-            if item.kind == "button" then
+            if item.kind == "slider" then
+                context:change_slider(
+                    route.entry,
+                    item,
+                    context.pointer_x,
+                    context.pointer_y,
+                    "pointer"
+                )
+            elseif item.kind == "button" then
                 if not context:start_hold(route.entry, item, "pointer") then
                     context:queue(item.node.action, item.node.id,
                         {input_source = "pointer"}, route.entry.key)
@@ -148,7 +223,15 @@ function InputRouter.event(context, name, ...)
         context.focused = nil
         return route.consumed
     elseif name == "wheelmoved" then
-        return context:route_at(context.pointer_x, context.pointer_y).consumed
+        return context:scroll_at(
+            context.pointer_x,
+            context.pointer_y,
+            args[1],
+            args[2]
+        ) or context:route_at(
+            context.pointer_x,
+            context.pointer_y
+        ).consumed
     elseif name == "mousereleased" then
         context.pointer_x, context.pointer_y = args[1], args[2]
         if context.cancelled_pointer_button == args[3] then

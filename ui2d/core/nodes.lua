@@ -4,10 +4,12 @@ local kinds = {
     screen = true,
     row = true,
     column = true,
+    flow = true,
     stack = true,
     panel = true,
     text = true,
     icon = true,
+    image = true,
     spacer = true,
 }
 
@@ -15,7 +17,8 @@ local function construct(kind, spec)
     assert(kinds[kind], "unknown ui2d node kind: " .. tostring(kind))
     if kind == "text" and type(spec) == "string" then
         spec = {value = spec}
-    elseif kind == "icon" and type(spec) == "string" then
+    elseif (kind == "icon" or kind == "image")
+        and type(spec) == "string" then
         spec = {name = spec}
     else
         spec = spec or {}

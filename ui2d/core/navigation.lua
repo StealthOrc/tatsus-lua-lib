@@ -11,6 +11,7 @@ local function visit(item, parent, navigation_enabled, result)
     item.parent = parent
     navigation_enabled = navigation_enabled and item.node.navigation ~= false
         and item.node.selectable ~= false
+        and item.node.focusable ~= false
     item.navigation_enabled = navigation_enabled
     if item.interactive and navigation_enabled then
         result[#result + 1] = item
@@ -56,7 +57,9 @@ end
 local function group_axis(item)
     local config = type(item.node.navigation) == "table" and item.node.navigation or nil
     if config and config.axis then return config.axis end
-    if item.kind == "row" then return "horizontal" end
+    if item.kind == "row" or item.kind == "flow" then
+        return "horizontal"
+    end
     if item.kind == "column" then return "vertical" end
     return nil
 end
@@ -127,7 +130,7 @@ local function structural(layout, selected, direction, wrap)
 end
 
 local function center(item)
-    local rect = item.rect
+    local rect = item.node.navigation_rect or item.rect
     return rect.x + rect.w / 2, rect.y + rect.h / 2
 end
 
@@ -150,7 +153,7 @@ local function descends_from(item, ancestor)
     return false
 end
 
-local function spatial(layout, selected, direction)
+local function spatial(layout, selected, direction, options)
     local sx, sy = center(selected)
     local excluded_group = orthogonal_group(selected, direction)
     local best, best_score
@@ -163,7 +166,20 @@ local function spatial(layout, selected, direction)
             local primary = dx * direction.dx + dy * direction.dy
             if primary > 0.5 then
                 local secondary = math.abs(dx * direction.dy - dy * direction.dx)
-                local score = primary + secondary * 2.5
+                local score
+                if type(options.score) == "function" then
+                    score = options.score {
+                        current = selected.node.id,
+                        candidate = candidate.node.id,
+                        direction = direction,
+                        primary = primary,
+                        secondary = secondary,
+                        current_item = selected,
+                        candidate_item = candidate,
+                    }
+                end
+                score = score or primary
+                    + secondary * (options.cross_axis_weight or 2.5)
                 if not best_score or score < best_score then
                     best, best_score = candidate, score
                 end
@@ -213,7 +229,51 @@ function Navigation.move(layout, selected_id, name, options, request)
     if options.mode == "manual" then return nil end
 
     return structural(layout, selected, direction, options.wrap)
-        or spatial(layout, selected, direction)
+        or spatial(layout, selected, direction, options)
+end
+
+function Navigation.resolve_rectangles(
+    targets,
+    source_index,
+    direction_name,
+    options
+)
+    local direction = directions[direction_name]
+    local source = targets and targets[source_index]
+    if not direction or not source then return nil end
+    options = options or {}
+    local source_rect = source.navigation_rect or source.rect or source
+    local sx = source_rect.x + source_rect.w / 2
+    local sy = source_rect.y + source_rect.h / 2
+    local best_index, best_score
+    for index, target in ipairs(targets) do
+        if index ~= source_index and target.enabled ~= false then
+            local rect = target.navigation_rect or target.rect or target
+            local dx = rect.x + rect.w / 2 - sx
+            local dy = rect.y + rect.h / 2 - sy
+            local primary = dx * direction.dx + dy * direction.dy
+            if primary > (options.minimum_dot or 0.5) then
+                local secondary = math.abs(
+                    dx * direction.dy - dy * direction.dx
+                )
+                local score = type(options.score) == "function"
+                    and options.score {
+                        current = source,
+                        candidate = target,
+                        direction = direction_name,
+                        primary = primary,
+                        secondary = secondary,
+                    }
+                    or nil
+                score = score or primary
+                    + secondary * (options.cross_axis_weight or 2.5)
+                if not best_score or score < best_score then
+                    best_index, best_score = index, score
+                end
+            end
+        end
+    end
+    return best_index
 end
 
 function Navigation.direction(x, y, threshold)

@@ -54,6 +54,7 @@ return UI.view("tooltip", {
                 background = "tooltip",
                 border = "accent",
                 border_width = 2,
+                overflow = "visible",
                 transform = {translate_x = UI.px(x), translate_y = UI.px(y)},
                 transition = {
                     transform = {

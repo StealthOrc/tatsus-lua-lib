@@ -55,6 +55,17 @@ local defaults = {
             text = "default",
         },
     },
+    sliders = {
+        default = {
+            track = {0.18, 0.18, 0.21, 1},
+            fill = {0.35, 0.62, 1, 1},
+            thumb = "white",
+            thumb_selected = {0.72, 0.84, 1, 1},
+            thumb_pressed = {0.55, 0.74, 1, 1},
+            track_thickness = 6,
+            thumb_size = 18,
+        },
+    },
 }
 
 local function copy(value, seen)
@@ -146,6 +157,18 @@ function StyleSheet:text_field_style(name)
     local base = copy(self.values.text_fields.default or {})
     if name ~= "default" then
         merge(base, assert(self.values.text_fields[name], "unknown text field style: " .. tostring(name)))
+    end
+    return base
+end
+
+function StyleSheet:slider_style(name)
+    name = name or "default"
+    local base = copy(self.values.sliders.default or {})
+    if name ~= "default" then
+        merge(base, assert(
+            self.values.sliders[name],
+            "unknown slider style: " .. tostring(name)
+        ))
     end
     return base
 end
